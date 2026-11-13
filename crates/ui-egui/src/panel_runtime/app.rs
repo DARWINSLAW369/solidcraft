@@ -1367,6 +1367,7 @@ impl crate::SolveApp {
         self.shell.workspace_panels.clear();
         self.publish_tab_accent(ui.ctx());
         crate::browser::publish_row_prefs(self, ui.ctx());
+        crate::manufacture_workspace::reserve(self, ui.ctx(), render_domain);
         let prepared = self.prepare_workspace_panels(ui, render_domain, true);
         self.shell.content = Some(render_domain);
         if render_domain.is_positive() && render_domain.is_finite() {

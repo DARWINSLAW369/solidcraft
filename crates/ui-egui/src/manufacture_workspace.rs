@@ -199,15 +199,55 @@ fn status_color(t: &Tokens, status: &str) -> Color32 {
     }
 }
 
+/// The panel's width, margins included.
+const PANEL_WIDTH: f32 = 305.0;
+/// The id the panel's footprint is registered under, so the shared host docks
+/// its panels and places the view cube and overlays beside it.
+const PANEL_ID: &str = "manufacture:panel";
+
+/// The right-hand strip the panel takes, between the ribbon and the status bar.
+fn panel_rect(app: &SolveApp, ctx: &egui::Context, domain: egui::Rect) -> egui::Rect {
+    let gap = crate::ui_kit::Container::new(ctx, crate::ui_kit::Surface::Panel).gap();
+    let mut area = domain;
+    if crate::status_bar::shown(app) {
+        area.max.y -= crate::status_bar::HEIGHT.min(area.height().max(0.0));
+    }
+    if !app.embedded {
+        let cards = crate::toolbar::shell_cards(app, area);
+        area.min.y = cards.bottom.min(area.bottom()).max(area.top());
+    }
+    let top = (area.top() + gap).min(area.bottom());
+    let bottom = (area.bottom() - gap).max(top);
+    let right = (area.right() - gap).max(area.left());
+    let left = (right - PANEL_WIDTH).max(area.left());
+    egui::Rect::from_min_max(egui::pos2(left, top), egui::pos2(right, bottom))
+}
+
+/// Reserve the panel's footprint before the shared host lays out its panels,
+/// so docked panels, the view cube and framing keep clear of it.
+pub fn reserve(app: &mut SolveApp, ctx: &egui::Context, domain: egui::Rect) {
+    let rect = active(app).then(|| panel_rect(app, ctx, domain));
+    crate::shell::register_panel(app, PANEL_ID, rect);
+}
+
 /// The right-hand panel: the manufacturing model as it stands.
 pub fn panel(app: &mut SolveApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     let mut run: Option<&'static str> = None;
-    egui::Panel::right("sc_manufacture")
-        .exact_size(285.0)
-        .resizable(false)
-        .frame(egui::Frame::NONE.fill(t.panel).inner_margin(10))
-        .show(ui, |ui| {
+    let Some(rect) = app.shell.workspace_panels.get(PANEL_ID).copied() else { return };
+    let frame = crate::ui_kit::Container::new(ui.ctx(), crate::ui_kit::Surface::Panel).edge_frame(t.panel);
+    let mut host = ui.new_child(egui::UiBuilder::new().id_salt("sc_manufacture").max_rect(rect));
+    host.set_clip_rect(rect);
+    crate::ui_kit::Container::paint_frame(host.painter(), frame, rect);
+    let inner = rect.shrink(10.0);
+    let mut body = host.new_child(egui::UiBuilder::new().max_rect(inner));
+    body.set_clip_rect(inner);
+    body.set_width(inner.width());
+    // Long tool and operation names end in an ellipsis inside the panel.
+    body.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+    {
+        let ui = &mut body;
+        {
             crate::ui_kit::scope(ui, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     ui.heading(solidcraft_ui_text::tr_label("Manufacture"));
@@ -270,7 +310,8 @@ pub fn panel(app: &mut SolveApp, ui: &mut egui::Ui) {
                     }
                 });
             });
-        });
+        }
+    }
     if let Some(id) = run {
         app.start(id);
     }
