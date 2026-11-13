@@ -7,7 +7,7 @@ use egui::{Color32, RichText};
 use serde_json::{Value, json};
 
 use crate::SolveApp;
-use crate::theme::Tokens;
+use solidcraft_theme::Tokens;
 
 pub const TAB: &str = "MANUFACTURE";
 
@@ -74,12 +74,10 @@ pub fn start(app: &mut SolveApp, id: &str) -> bool {
         "cam.operation.set" => Some(json!({"operation": null})),
         _ => {
             let tools: Vec<(u64, bool)> = m.tools.tools.iter().map(|t| (t.id, t.is_laser())).collect();
-            id.strip_prefix("cam.operation.")
-                .filter(|k| !matches!(*k, "add" | "remove" | "list" | "kinds"))
-                .map(|k| {
-                    let picked = crate::cam_editor::selection_geometry(app, if k == "tap" { "drill" } else { k }).map(|x| x.0);
-                    kind_template(k, setup, tool, &tools, picked)
-                })
+            id.strip_prefix("cam.operation.").filter(|k| !matches!(*k, "add" | "remove" | "list" | "kinds")).map(|k| {
+                let picked = crate::cam_editor::selection_geometry(app, if k == "tap" { "drill" } else { k }).map(|x| x.0);
+                kind_template(k, setup, tool, &tools, picked)
+            })
         }
     };
     // A new operation opens in the operation editor (Fields and JSON), for the setup picked.
@@ -212,19 +210,19 @@ pub fn panel(app: &mut SolveApp, ui: &mut egui::Ui) {
         .show(ui, |ui| {
             crate::ui_kit::scope(ui, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    ui.heading(crate::i18n::tr_label("Manufacture"));
+                    ui.heading(solidcraft_ui_text::tr_label("Manufacture"));
                     let s = &app.session;
                     let m = &s.doc.manufacture;
                     if m.tools.tools.is_empty() && m.setups.is_empty() {
                         ui.add_space(t.space_8);
-                        ui.label(RichText::new(crate::i18n::tr_label("No tools or setups yet.")).color(t.text_dim));
-                        ui.small(crate::i18n::tr_label(
+                        ui.label(RichText::new(solidcraft_ui_text::tr_label("No tools or setups yet.")).color(t.text_dim));
+                        ui.small(solidcraft_ui_text::tr_label(
                             "Add a tool and create a setup, add operations, then generate, simulate and post. Every button opens its command filled in; the command box, scripts and the agent run the same cam.* commands.",
                         ));
                         return;
                     }
                     ui.add_space(t.space_8);
-                    ui.label(RichText::new(crate::i18n::tr_label("Tools")).strong());
+                    ui.label(RichText::new(solidcraft_ui_text::tr_label("Tools")).strong());
                     for tool in &m.tools.tools {
                         let kind = serde_json::to_value(tool.kind).ok().and_then(|v| v["kind"].as_str().map(str::to_string)).unwrap_or_default();
                         ui.label(format!("T{}  {}  Ø{} {}", tool.number, tool.name, tool.diameter, kind.replace('_', " ")));
@@ -233,7 +231,7 @@ pub fn panel(app: &mut SolveApp, ui: &mut egui::Ui) {
                         ui.add_space(t.space_8);
                         ui.label(RichText::new(format!("{}  ·  {} ({} axes)", st.name, st.machine.name, st.machine.axis_count())).strong());
                         if st.operations.is_empty() {
-                            ui.label(RichText::new(crate::i18n::tr_label("No operations.")).color(t.text_dim));
+                            ui.label(RichText::new(solidcraft_ui_text::tr_label("No operations.")).color(t.text_dim));
                         }
                         for op in &st.operations {
                             let made = s.cam.operations.get(&op.id);
@@ -247,7 +245,7 @@ pub fn panel(app: &mut SolveApp, ui: &mut egui::Ui) {
                                 ui.label(RichText::new("●").color(status_color(&t, status)));
                                 ui.label(format!("{}  {}", op.name, op.kind.type_name()));
                                 let word = if stale { "stale" } else { status };
-                                ui.label(RichText::new(crate::i18n::tr_label(word)).color(t.text_dim).small());
+                                ui.label(RichText::new(solidcraft_ui_text::tr_label(word)).color(t.text_dim).small());
                             });
                             if let Some(g) = made {
                                 for issue in g.notice.issues.iter().filter(|i| i.severity != solidcraft_engine::cam::notice::Severity::Info) {
@@ -261,14 +259,14 @@ pub fn panel(app: &mut SolveApp, ui: &mut egui::Ui) {
                     ui.add_space(t.space_12);
                     ui.horizontal_wrapped(|ui| {
                         for (label, id) in [("Generate", "cam.generate"), ("Simulate", "cam.simulate.show"), ("Post", "cam.post")] {
-                            if crate::ui_kit::button(ui, crate::i18n::tr_label(label), crate::ui_kit::Button::Small).clicked() {
+                            if crate::ui_kit::button(ui, solidcraft_ui_text::tr_label(label), crate::ui_kit::Button::Small).clicked() {
                                 run = Some(id);
                             }
                         }
                     });
                     if let Some(p) = &s.cam.preview {
                         ui.add_space(t.space_8);
-                        ui.small(format!("{}: {:.0} %", crate::i18n::tr_label("Simulation"), p.progress * 100.0));
+                        ui.small(format!("{}: {:.0} %", solidcraft_ui_text::tr_label("Simulation"), p.progress * 100.0));
                     }
                 });
             });

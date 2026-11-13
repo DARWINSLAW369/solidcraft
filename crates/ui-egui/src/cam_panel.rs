@@ -6,7 +6,7 @@
 use serde_json::json;
 
 use crate::SolveApp;
-use crate::theme::Tokens;
+use solidcraft_theme::Tokens;
 
 /// Playback state, kept in egui's frame data (not part of the design).
 #[derive(Clone, Copy, Debug, Default)]
@@ -21,7 +21,7 @@ struct Playback {
 const SPEEDS: [f64; 6] = [1.0, 4.0, 16.0, 64.0, 256.0, 1024.0];
 
 fn state_id() -> egui::Id {
-    egui::Id::new("sc_cam_sim_playback")
+    egui::Id::unique("sc_cam_sim_playback")
 }
 
 pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
@@ -34,65 +34,70 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
 
     let mut want: Option<serde_json::Value> = None;
     let setup = preview.setup;
-    let closed = crate::ui_kit::Window::new(egui::Id::new("sc_cam_sim"), "ws_manufacture", crate::i18n::tr_label("Machining Simulation")).show_body(ctx, |ui| {
-        let op: String = preview.operation.as_ref().map_or_else(|| crate::i18n::tr_label("no operation").to_string(), |(_, n)| n.clone());
-        crate::ui_kit::caption(ui, "Operation", &format!("{op}  ({} / {} moves)", preview.move_index + 1, preview.total_moves));
-        crate::ui_kit::caption(ui, "Time", &format!("{:.0} s / {:.0} s", preview.time_s, preview.total_time_s));
-        ui.add_space(t.space_8);
-        let mut progress = pb.progress;
-        let resp =
-            crate::ui_kit::slider(ui, &mut progress, 0.0..=1.0, crate::ui_kit::Slider { show_value: false, integer: false, ..Default::default() });
-        if resp.dragged() || resp.changed() {
-            pb.playing = false;
-        }
-        if (progress - pb.progress).abs() > 1e-9 {
-            pb.progress = progress;
-            want = Some(json!({"setup": setup, "progress": progress}));
-        }
-        ui.add_space(t.space_8);
-        ui.horizontal(|ui| {
-            let label = if pb.playing { "Pause" } else { "Play" };
-            if crate::ui_kit::button(ui, crate::i18n::tr_label(label), crate::ui_kit::Button::Small).clicked() {
-                if !pb.playing && pb.progress >= 1.0 - 1e-9 {
-                    pb.progress = 0.0;
-                    want = Some(json!({"setup": setup, "progress": 0.0}));
+    let closed = crate::ui_kit::Window::new(egui::Id::unique("sc_cam_sim"), "ws_manufacture", solidcraft_ui_text::tr_label("Machining Simulation"))
+        .show_body(ctx, |ui| {
+            let op: String = preview.operation.as_ref().map_or_else(|| solidcraft_ui_text::tr_label("no operation").to_string(), |(_, n)| n.clone());
+            crate::ui_kit::caption(ui, "Operation", &format!("{op}  ({} / {} moves)", preview.move_index + 1, preview.total_moves));
+            crate::ui_kit::caption(ui, "Time", &format!("{:.0} s / {:.0} s", preview.time_s, preview.total_time_s));
+            ui.add_space(t.space_8);
+            let mut progress = pb.progress;
+            let resp = crate::ui_kit::slider(
+                ui,
+                &mut progress,
+                0.0..=1.0,
+                crate::ui_kit::Slider { show_value: false, integer: false, ..Default::default() },
+            );
+            if resp.dragged() || resp.changed() {
+                pb.playing = false;
+            }
+            if (progress - pb.progress).abs() > 1e-9 {
+                pb.progress = progress;
+                want = Some(json!({"setup": setup, "progress": progress}));
+            }
+            ui.add_space(t.space_8);
+            ui.horizontal(|ui| {
+                let label = if pb.playing { "Pause" } else { "Play" };
+                if crate::ui_kit::button(ui, solidcraft_ui_text::tr_label(label), crate::ui_kit::Button::Small).clicked() {
+                    if !pb.playing && pb.progress >= 1.0 - 1e-9 {
+                        pb.progress = 0.0;
+                        want = Some(json!({"setup": setup, "progress": 0.0}));
+                    }
+                    pb.playing = !pb.playing;
                 }
-                pb.playing = !pb.playing;
-            }
-            if crate::ui_kit::button(ui, crate::i18n::tr_label("◂ Move"), crate::ui_kit::Button::Small)
-                .on_hover_text(crate::i18n::tr_label("Back one move"))
-                .clicked()
-            {
-                pb.playing = false;
-                want = Some(json!({"setup": setup, "step": -1}));
-            }
-            if crate::ui_kit::button(ui, crate::i18n::tr_label("Move ▸"), crate::ui_kit::Button::Small)
-                .on_hover_text(crate::i18n::tr_label("On one move"))
-                .clicked()
-            {
-                pb.playing = false;
-                want = Some(json!({"setup": setup, "step": 1}));
-            }
-            ui.separator();
-            let labels = ["1×", "4×", "16×", "64×", "256×", "1024×"];
-            let width = crate::ui_kit::ContentWidth::button(ui, "1024×") * 6.0;
-            ui.allocate_ui(egui::vec2(width, crate::ui_kit::row_height()), |ui| {
-                crate::ui_kit::segmented(ui, &mut pb.speed, &labels, Default::default());
+                if crate::ui_kit::button(ui, solidcraft_ui_text::tr_label("◂ Move"), crate::ui_kit::Button::Small)
+                    .on_hover_text(solidcraft_ui_text::tr_label("Back one move"))
+                    .clicked()
+                {
+                    pb.playing = false;
+                    want = Some(json!({"setup": setup, "step": -1}));
+                }
+                if crate::ui_kit::button(ui, solidcraft_ui_text::tr_label("Move ▸"), crate::ui_kit::Button::Small)
+                    .on_hover_text(solidcraft_ui_text::tr_label("On one move"))
+                    .clicked()
+                {
+                    pb.playing = false;
+                    want = Some(json!({"setup": setup, "step": 1}));
+                }
+                ui.separator();
+                let labels = ["1×", "4×", "16×", "64×", "256×", "1024×"];
+                let width = crate::ui_kit::ContentWidth::button(ui, "1024×") * 6.0;
+                ui.allocate_ui(egui::vec2(width, crate::ui_kit::row_height()), |ui| {
+                    crate::ui_kit::segmented(ui, &mut pb.speed, &labels, Default::default());
+                });
             });
-        });
-        if pb.playing {
-            let dt = f64::from(ui.input(|i| i.stable_dt).min(0.1));
-            let speed = SPEEDS.get(pb.speed).copied().unwrap_or(1.0);
-            let total = preview.total_time_s.max(1e-6);
-            let next = (pb.progress + dt * speed / total).min(1.0);
-            if next >= 1.0 {
-                pb.playing = false;
+            if pb.playing {
+                let dt = f64::from(ui.input(|i| i.stable_dt).min(0.1));
+                let speed = SPEEDS.get(pb.speed).copied().unwrap_or(1.0);
+                let total = preview.total_time_s.max(1e-6);
+                let next = (pb.progress + dt * speed / total).min(1.0);
+                if next >= 1.0 {
+                    pb.playing = false;
+                }
+                pb.progress = next;
+                want = Some(json!({"setup": setup, "progress": next}));
+                ui.ctx().request_repaint();
             }
-            pb.progress = next;
-            want = Some(json!({"setup": setup, "progress": next}));
-            ui.ctx().request_repaint();
-        }
-    });
+        });
     if closed {
         let _ = app.run("cam.simulate.hide", json!({}));
         ctx.data_mut(|d| d.remove::<Playback>(state_id()));

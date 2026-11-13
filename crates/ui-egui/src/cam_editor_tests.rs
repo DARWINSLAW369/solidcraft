@@ -1,8 +1,8 @@
 use serde_json::{Value, json};
 
 use super::*;
-use solidcraft_engine::geom::prelude::*;
 use crate::scenario::Harness;
+use solidcraft_engine::geom::prelude::*;
 
 /// A block, a tool, a setup and a pocket operation; returns the operation's id.
 fn pocket(h: &mut Harness) -> u64 {

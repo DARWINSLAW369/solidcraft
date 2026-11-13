@@ -18,7 +18,7 @@ use serde_json::{Map, Value, json};
 use solidcraft_engine::cam;
 
 use crate::SolveApp;
-use crate::theme::Tokens;
+use solidcraft_theme::Tokens;
 
 /// The editor's two tabs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -177,7 +177,8 @@ impl CamEditor {
 pub fn selection_geometry(app: &SolveApp, ty: &str) -> Option<(Value, String)> {
     use solidcraft_engine::Sel;
     let sel = &app.session.selection;
-    let points: Vec<Value> = sel.iter().filter_map(|s| if let Sel::Face { point, .. } = s { Some(json!([point.x, point.y, point.z])) } else { None }).collect();
+    let points: Vec<Value> =
+        sel.iter().filter_map(|s| if let Sel::Face { point, .. } = s { Some(json!([point.x, point.y, point.z])) } else { None }).collect();
     if !points.is_empty() {
         let n = points.len();
         let holes = matches!(ty, "drill" | "bore" | "circular" | "thread");
@@ -366,7 +367,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let area = ctx.content_rect();
     // Esc stops picking an origin; it does not close the editor (its close and Cancel do).
     let can = ed.blocked().is_none();
-    let (closed, action) = crate::ui_kit::Window::new(egui::Id::new("sc_cam_editor"), "ws_manufacture", &name)
+    let (closed, action) = crate::ui_kit::Window::new(egui::Id::unique("sc_cam_editor"), "ws_manufacture", &name)
         .cards(2.5)
         .placed(egui::Align2::CENTER_TOP, egui::pos2(area.center().x, area.top() + t.space_24 * 5.0))
         .fields()
@@ -424,7 +425,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     egui::ScrollArea::vertical().max_height(tall).auto_shrink([false, true]).show(ui, |ui| {
                         let r = ui.add(
                             egui::TextEdit::multiline(&mut ed.text)
-                                .id(egui::Id::new("sc_cam_editor_json"))
+                                .id(egui::Id::unique("sc_cam_editor_json"))
                                 .code_editor()
                                 .desired_rows(24)
                                 .desired_width(f32::INFINITY),
@@ -565,7 +566,7 @@ fn fields(ui: &mut egui::Ui, draft: &mut Value, inputs: &mut Inputs, tools: &[(u
         None => {}
     }
     if let Some((g, what)) = picked
-        && crate::ui_kit::button(ui, &format!("Use Selected ({what})"), crate::ui_kit::Button::Normal)
+        && crate::ui_kit::button(ui, format!("Use Selected ({what})"), crate::ui_kit::Button::Normal)
             .on_hover_text("Work on what is selected in the viewport: sets the geometry (and an area operation's boundary) to the selection")
             .clicked()
     {
@@ -651,7 +652,7 @@ fn fields(ui: &mut egui::Ui, draft: &mut Value, inputs: &mut Inputs, tools: &[(u
                     }
                 }
                 let hint = "Auto: roughing clears around the part's outline, wall finishing reaches the walls from outside, surface finishing keeps to the part, and a selection bounds the operation to what was picked.";
-                ui.label(RichText::new(crate::i18n::tr_label(hint)).color(t.text_dim));
+                ui.label(RichText::new(solidcraft_ui_text::tr_label(hint)).color(t.text_dim));
                 if let Some(u) = used {
                     ui.label(RichText::new(format!("Last generated: {u}")).color(t.text_dim));
                 }
@@ -863,7 +864,7 @@ fn setup_fields(
     if let Some(machine) = st.get_mut("machine") {
         section(ui, "Machine", false, |ui| {
             // Every known machine: the machine files SolidCraft ships and the design's own.
-            let mut labels: Vec<String> = vec![crate::i18n::tr_label("Keep this machine").to_string()];
+            let mut labels: Vec<String> = vec![solidcraft_ui_text::tr_label("Keep this machine").to_string()];
             labels.extend(machines.iter().map(|(_, m)| m.name.clone()));
             let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
             let mut k = 0usize;
@@ -939,7 +940,7 @@ fn tool_kind_default(kind: &str, diameter: f64) -> Value {
 /// A collapsible section of the form.
 fn section(ui: &mut egui::Ui, title: &str, open: bool, add: impl FnOnce(&mut egui::Ui)) {
     let t = Tokens::get();
-    egui::CollapsingHeader::new(RichText::new(crate::i18n::tr_label(title)).strong().color(t.text))
+    egui::CollapsingHeader::new(RichText::new(solidcraft_ui_text::tr_label(title)).strong().color(t.text))
         .id_salt(("cam_ed_section", title))
         .default_open(open)
         .show(ui, add);
@@ -947,7 +948,7 @@ fn section(ui: &mut egui::Ui, title: &str, open: bool, add: impl FnOnce(&mut egu
 
 /// A nested group (a lead, the ramp) inside a section.
 fn group(ui: &mut egui::Ui, title: &str, add: impl FnOnce(&mut egui::Ui)) {
-    egui::CollapsingHeader::new(crate::i18n::tr_label(title)).id_salt(("cam_ed_group", title)).default_open(true).show(ui, add);
+    egui::CollapsingHeader::new(solidcraft_ui_text::tr_label(title)).id_salt(("cam_ed_group", title)).default_open(true).show(ui, add);
 }
 
 /// One parameter: a checkbox, a number, a choice, a text, a point, or a group of them.
@@ -1026,7 +1027,7 @@ fn list(ui: &mut egui::Ui, inputs: &mut Inputs, path: &str, label: &str, a: &mut
             };
             let l = format!("{what} {}", i + 1);
             ui.horizontal(|ui| {
-                if crate::ui_kit::button(ui, "✕", crate::ui_kit::Button::Small).on_hover_text(crate::i18n::tr_label("Remove")).clicked() {
+                if crate::ui_kit::button(ui, "✕", crate::ui_kit::Button::Small).on_hover_text(solidcraft_ui_text::tr_label("Remove")).clicked() {
                     remove = Some(i);
                 }
                 ui.vertical(|ui| value(ui, inputs, &p, &l, x, None));
@@ -1322,7 +1323,9 @@ fn draw_stock(painter: &egui::Painter, proj: &crate::viewport::Proj, shape: &cam
     };
     match *shape {
         cam::setup::StockShape::Box { min, max } => {
-            let c = |i: usize| Vec3::new(if i & 1 == 0 { min.x } else { max.x }, if i & 2 == 0 { min.y } else { max.y }, if i & 4 == 0 { min.z } else { max.z });
+            let c = |i: usize| {
+                Vec3::new(if i & 1 == 0 { min.x } else { max.x }, if i & 2 == 0 { min.y } else { max.y }, if i & 4 == 0 { min.z } else { max.z })
+            };
             for (a, b) in [(0, 1), (2, 3), (4, 5), (6, 7), (0, 2), (1, 3), (4, 6), (5, 7), (0, 4), (1, 5), (2, 6), (3, 7)] {
                 line(c(a), c(b));
             }
@@ -1481,7 +1484,7 @@ fn number_text(v: &Value) -> String {
 
 /// A typed number: a whole number for a count, else a decimal.
 fn parse_number(s: &str, integer: bool) -> Option<Value> {
-    let x = crate::prefs::parse_number(s.trim().trim_end_matches("mm").trim_end_matches('°'))?;
+    let x = crate::ui_kit::parse_number(s.trim().trim_end_matches("mm").trim_end_matches('°'))?;
     if integer { (x.fract() == 0.0 && (0.0..=1e9).contains(&x)).then(|| json!(x as u64)) } else { Some(json!(x)) }
 }
 
@@ -1500,7 +1503,7 @@ fn parse_point(s: &str) -> Option<Value> {
     if s.is_empty() {
         return Some(Value::Null);
     }
-    let parts: Vec<f64> = s.split([',', ';', ' ']).filter(|p| !p.is_empty()).map(crate::prefs::parse_number).collect::<Option<_>>()?;
+    let parts: Vec<f64> = s.split([',', ';', ' ']).filter(|p| !p.is_empty()).map(crate::ui_kit::parse_number).collect::<Option<_>>()?;
     match parts.as_slice() {
         [x, y] => Some(json!([x, y])),
         [x, y, z] => Some(json!([x, y, z])),

@@ -7,11 +7,13 @@
 use egui::Color32;
 use serde_json::{Value, json};
 
-use super::{Actions, Row, draw_row, is_open, toggle};
+use super::{Actions, Row, Spec, is_open, node_row, toggle};
 use crate::SolveApp;
-use crate::context_menu::{Item, Target};
-use crate::theme::Tokens;
+use crate::context_menu::Target;
+use crate::ui_kit::Item;
+use crate::ui_kit::browser::Rows;
 use solidcraft_engine::cam;
+use solidcraft_theme::Tokens;
 
 /// An operation's state for its row: `ok`, `warning`, `error`, `stale`, `not generated` or
 /// `suppressed`.
@@ -60,15 +62,16 @@ fn row_activity(ui: &egui::Ui, rect: Option<egui::Rect>, generating: bool, queue
 }
 
 /// The Manufacture folder (only when the design has tools or setups).
-pub(super) fn rows(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize, acts: &mut Actions) {
+pub(super) fn rows(app: &mut SolveApp, rows: &mut Rows<'_>, depth: usize, acts: &mut Actions) {
     if app.session.doc.manufacture.is_empty() {
         return;
     }
     let t = Tokens::get();
     let key = "manufacture";
     let open = is_open(app, key, true);
-    let r = draw_row(ui, ui.id().with(key), &Row { depth, fold: Some(open), icon: "cam", label: "Manufacture", ..Default::default() });
-    row_activity(ui, r.rect, app.cam_job.as_ref().is_some_and(|j| j.current.is_some()), false);
+    let r =
+        node_row(rows, Spec { key, ..Default::default() }, Row { depth, fold: Some(open), icon: "cam", label: "Manufacture", ..Default::default() });
+    row_activity(rows.ui(), r.rect, app.cam_job.as_ref().is_some_and(|j| j.current.is_some()), false);
     if r.fold || r.clicked {
         toggle(app, key, true);
     }
@@ -119,21 +122,19 @@ pub(super) fn rows(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize, acts: &m
         let tools: Vec<(u64, String)> = all_tools
             .iter()
             .filter(|(id, _)| {
-                machines.len() == 1
-                    || used.get(mi).is_some_and(|u| u.contains(id))
-                    || (mi == 0 && !used.iter().any(|u| u.contains(id)))
+                machines.len() == 1 || used.get(mi).is_some_and(|u| u.contains(id)) || (mi == 0 && !used.iter().any(|u| u.contains(id)))
             })
             .cloned()
             .collect();
         let mine: Vec<&(u64, String, String, String, Vec<OpRow>)> = setups.iter().filter(|st| &st.2 == machine).collect();
-        machine_rows(app, ui, depth + 1, acts, machine, &mine, &tools, &t);
+        machine_rows(app, rows, depth + 1, acts, machine, &mine, &tools, &t);
     }
 }
 
 #[allow(clippy::too_many_arguments)]
 fn machine_rows(
     app: &mut SolveApp,
-    ui: &mut egui::Ui,
+    rows: &mut Rows<'_>,
     depth: usize,
     acts: &mut Actions,
     machine: &str,
@@ -143,7 +144,11 @@ fn machine_rows(
 ) {
     let mkey = format!("cam-machine-{machine}");
     let mopen = is_open(app, &mkey, true);
-    let r = draw_row(ui, ui.id().with(("cam-machine", machine)), &Row { depth, fold: Some(mopen), icon: "cam", label: machine, name: true, ..Default::default() });
+    let r = node_row(
+        rows,
+        Spec { key: &mkey, ..Default::default() },
+        Row { depth, fold: Some(mopen), icon: "cam", label: machine, name: true, ..Default::default() },
+    );
     if let Some(resp) = &r.resp {
         let n = setups.len();
         resp.clone().on_hover_text(format!("machine of {n} setup{}: change it in a setup's editor", if n == 1 { "" } else { "s" }));
@@ -167,10 +172,10 @@ fn machine_rows(
         let label = name.clone();
         let picked = app.tree.picked_cam == Some(CamPick::Setup(sid));
         let any_shown = ops.iter().any(|(oid, ..)| !app.session.cam.hidden.contains(oid));
-        let r = draw_row(
-            ui,
-            ui.id().with(("cam-setup", sid)),
-            &Row {
+        let r = node_row(
+            rows,
+            Spec { key: &skey, ..Default::default() },
+            Row {
                 depth: depth + 1,
                 fold: Some(sopen),
                 eye: (!ops.is_empty()).then_some(any_shown),
@@ -186,7 +191,7 @@ fn machine_rows(
             let _ = app.run("cam.toolpath.visibility", json!({"setup": sid, "visible": !any_shown}));
         }
         let busy = ops.iter().any(|(oid, ..)| crate::cam_job::state(app, *oid) == Some("generating"));
-        row_activity(ui, r.rect, busy, false);
+        row_activity(rows.ui(), r.rect, busy, false);
         if r.fold {
             toggle(app, &skey, true);
         }
@@ -204,7 +209,7 @@ fn machine_rows(
             acts.menu = Some((p, Target::CamSetup { id: sid }));
         }
         if let Some(resp) = &r.resp
-            && let Some(d) = drop_on(ui, resp, true)
+            && let Some(d) = drop_on(rows.ui(), resp, true)
         {
             moved = Some(json!({"operation": d.0, "setup": sid}));
         }
@@ -217,10 +222,10 @@ fn machine_rows(
             let hidden = app.session.cam.hidden.contains(oid);
             let label = format!("{}. {oname}", k + 1);
             let picked = app.tree.picked_cam == Some(CamPick::Operation(*oid));
-            let r = draw_row(
-                ui,
-                ui.id().with(("cam-op", *oid)),
-                &Row {
+            let r = node_row(
+                rows,
+                Spec { key: &format!("cam-op-{oid}"), ..Default::default() },
+                Row {
                     depth: depth + 2,
                     // The eye shows or hides the toolpath on the workpiece; Suppress is in the menu.
                     eye: Some(!hidden),
@@ -233,7 +238,7 @@ fn machine_rows(
                     ..Default::default()
                 },
             );
-            row_activity(ui, r.rect, state == "generating", state == "queued");
+            row_activity(rows.ui(), r.rect, state == "generating", state == "queued");
             if let Some(resp) = &r.resp {
                 resp.clone().on_hover_text(format!("{kind} with {tool}: {state}"));
             }
@@ -255,7 +260,7 @@ fn machine_rows(
                 if resp.drag_started() && !r.on_control {
                     resp.dnd_set_drag_payload(OpDrag(*oid));
                 }
-                if let Some(d) = drop_on(ui, resp, false).filter(|d| d.0 != *oid) {
+                if let Some(d) = drop_on(rows.ui(), resp, false).filter(|d| d.0 != *oid) {
                     moved = Some(json!({"operation": d.0, "before": oid}));
                 }
             }
@@ -271,17 +276,21 @@ fn machine_rows(
     let tkey = format!("cam-tools-{machine}");
     let tkey = tkey.as_str();
     let topen = is_open(app, tkey, false);
-    let r = draw_row(ui, ui.id().with((tkey, machine)), &Row { depth: depth + 1, fold: Some(topen), icon: "folder", label: "Tools", ..Default::default() });
+    let r = node_row(
+        rows,
+        Spec { key: tkey, ..Default::default() },
+        Row { depth: depth + 1, fold: Some(topen), icon: "folder", label: "Tools", ..Default::default() },
+    );
     if r.fold || r.clicked {
         toggle(app, tkey, false);
     }
     if topen {
         for (id, label) in tools.iter().map(|x| (x.0, x.1.as_str())) {
             let picked = app.tree.picked_cam == Some(CamPick::Tool(id));
-            let r = draw_row(
-                ui,
-                ui.id().with(("cam-tool", id)),
-                &Row { depth: depth + 2, icon: "cam", label, name: true, selected: picked, ..Default::default() },
+            let r = node_row(
+                rows,
+                Spec { key: &format!("cam-tool-{id}"), ..Default::default() },
+                Row { depth: depth + 2, icon: "cam", label, name: true, selected: picked, ..Default::default() },
             );
             if r.clicked {
                 app.tree.picked_cam = Some(CamPick::Tool(id));
