@@ -283,9 +283,16 @@ pub fn panel(app: &mut SolveApp, ui: &mut egui::Ui) {
                             };
                             ui.horizontal(|ui| {
                                 ui.label(RichText::new("●").color(status_color(&t, status)));
-                                ui.label(format!("{}  {}", op.name, op.kind.type_name()));
+                                // The status tag stays whole at the row's end; the name gives way.
                                 let word = if stale { "stale" } else { status };
-                                ui.label(RichText::new(solidcraft_ui_text::tr_label(word)).color(t.text_dim).small());
+                                let tag = egui::WidgetText::from(RichText::new(solidcraft_ui_text::tr_label(word)).color(t.text_dim).small())
+                                    .into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::TextStyle::Small);
+                                let room = (ui.available_width() - tag.size().x - ui.spacing().item_spacing.x).max(0.0);
+                                ui.scope(|ui| {
+                                    ui.set_max_width(room);
+                                    ui.add(egui::Label::new(format!("{}  {}", op.name, op.kind.type_name())).truncate());
+                                });
+                                ui.add(egui::Label::new(tag));
                             });
                             if let Some(g) = made {
                                 for issue in g.notice.issues.iter().filter(|i| i.severity != solidcraft_engine::cam::notice::Severity::Info) {
