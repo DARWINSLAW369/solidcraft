@@ -808,7 +808,7 @@ fn inside(mesh: &Mesh, p: Vec3) -> bool {
 }
 
 /// How far round its axis a face reaches (radians): a full hole or boss is about 2π.
-fn angular_span(bodies: &[BodyInput], bi: usize, tris: &[usize], origin: Vec3, axis: Vec3) -> f64 {
+pub(crate) fn angular_span(bodies: &[BodyInput], bi: usize, tris: &[usize], origin: Vec3, axis: Vec3) -> f64 {
     let Some(b) = bodies.get(bi) else { return 0.0 };
     let u = axis.any_perp().normalized().unwrap_or(Vec3::new(1.0, 0.0, 0.0));
     let v = axis.cross(u);

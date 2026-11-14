@@ -1360,3 +1360,95 @@ fn a_pocket_in_the_bottom_asks_for_the_other_side() {
         a["notice"]
     );
 }
+
+/// A blade, 60 x 30 x `thick`, with a round boss across its end: a 14 mm boss along y, 20
+/// long, with a 4 mm hole through it.
+fn paddle(thick: f64) -> Session {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 60, "width": 30, "height": thick, "body_name": "Paddle"}));
+    run(
+        &mut s,
+        "solid.cylinder",
+        json!({"radius": 7, "height": 20, "base": [65, 5, thick / 2.0], "axis": "Y", "operation": "join", "targets": ["Paddle"]}),
+    );
+    run(
+        &mut s,
+        "solid.cylinder",
+        json!({"diameter": 4, "height": 24, "base": [65, 3, thick / 2.0], "axis": "Y", "operation": "cut", "targets": ["Paddle"]}),
+    );
+    s
+}
+
+#[test]
+fn workholding_compares_the_ways_to_hold_a_part_and_holds_a_blade_by_its_boss() {
+    let mut s = paddle(10.0);
+    let w = run(&mut s, "cam.workholding", json!({"machine": "carvera"}));
+    let strategies = w["strategies"].as_array().unwrap();
+    let by = |id: &str| strategies.iter().find(|st| st["id"] == id).cloned().unwrap_or_else(|| panic!("{id}: {w:#}"));
+    // Every strategy is reported, the feasible ones first, best first.
+    assert_eq!(strategies.len(), 6, "{w:#}");
+    let scores: Vec<f64> = strategies.iter().filter_map(|st| st["score"].as_f64()).collect();
+    assert!(scores.windows(2).all(|p| p[0] <= p[1]), "{scores:?}");
+    // The boss's hole takes a pin, its two flat ends a clamp: nothing to file, found again exactly.
+    let pin = by("pin");
+    assert_eq!(pin["feasible"], true, "{pin:#}");
+    assert!((pin["values"]["hole"]["diameter_mm"].as_f64().unwrap() - 4.0).abs() < 0.05, "{pin:#}");
+    assert_eq!(pin["values"]["clamp_faces"].as_array().unwrap().len(), 2, "{pin:#}");
+    assert!((pin["values"]["boss_radius_mm"].as_f64().unwrap() - 7.0).abs() < 0.05, "{pin:#}");
+    assert_eq!(pin["costs"]["hand_finish"]["points"], 0.0);
+    assert!(pin["fixtures"].as_array().unwrap().iter().any(|f| f["name"] == "Pin" && f["shape"] == "cylinder"), "{pin:#}");
+    // A post per turned setup, each named for its setup, beside the boss and clear of the part.
+    let posts: Vec<&Value> = pin["fixtures"].as_array().unwrap().iter().filter(|f| f["shape"] == "box").collect();
+    assert_eq!(posts.len(), 2, "{pin:#}");
+    assert!(posts.iter().all(|p| p["max"][1].as_f64().unwrap() <= 5.0 - 3.0 + 1e-6), "{posts:?}");
+    // The clamp's grip against turning: an M3.7-ish bolt's preload, friction at the washers.
+    let slip = pin["values"]["clamp"]["slip_force_at_far_end_n"].as_f64().unwrap();
+    assert!(slip > 10.0 && slip < 500.0, "{pin:#}");
+    // A 10 mm blade 55 mm out barely bends (δ = F L³ / 3EI is a few microns), so the pin wins:
+    // sprues and a stub leave spots to file.
+    let d = pin["values"]["deflection_mm"].as_f64().unwrap();
+    assert!(d > 0.0005 && d < 0.02, "{pin:#}");
+    let (sprues, stub) = (by("sprues"), by("stub"));
+    assert!(sprues["costs"]["hand_finish"]["points"].as_f64().unwrap() > 0.0 && stub["costs"]["hand_finish"]["points"].as_f64().unwrap() > 0.0);
+    assert!(pin["score"].as_f64().unwrap() < sprues["score"].as_f64().unwrap(), "{w:#}");
+    // The clamp's friction alone turns the part under a hard roughing cut 55 mm out: reported.
+    assert!(pin["issues"].as_array().unwrap().iter().any(|i| i["code"] == "pin_torque"), "{pin:#}");
+    // Its long straight sides are parallel walls a vise can grip too, the tool coming from above.
+    assert_eq!(by("vise")["feasible"], true, "{:#}", by("vise"));
+    assert_eq!(by("vise")["values"]["jaw_gap_mm"], 30.0);
+    // A Carvera without its rotary module cannot use a chuck; with it, it can.
+    assert_eq!(by("rotary")["feasible"], false);
+    assert!(by("rotary")["issues"].to_string().contains("no_rotary"));
+    let w4 = run(&mut s, "cam.workholding", json!({"machine": "carvera_4axis", "strategy": "rotary"}));
+    assert_eq!(w4["strategies"].as_array().unwrap().len(), 1, "{w4:#}");
+    assert_eq!(w4["strategies"][0]["feasible"], true, "{w4:#}");
+    // A 3 mm blade held by its boss bends over 0.1 mm under the cut: flex is reported, and
+    // the frame, holding it all round, is preferred.
+    let mut thin = paddle(3.0);
+    let w3 = run(&mut thin, "cam.workholding", json!({"machine": "carvera"}));
+    let pin3 = w3["strategies"].as_array().unwrap().iter().find(|st| st["id"] == "pin").cloned().unwrap();
+    assert!(pin3["values"]["deflection_mm"].as_f64().unwrap() > 0.05, "{pin3:#}");
+    assert!(pin3["issues"].as_array().unwrap().iter().any(|i| i["code"] == "flex"), "{pin3:#}");
+    assert_ne!(w3["recommended"], "pin", "{w3:#}");
+    // A stiffer part bends less: the same paddle in plastic bends ~25 times as far.
+    let wp = run(&mut s, "cam.workholding", json!({"machine": "carvera", "material": "plastic", "strategy": "pin"}));
+    let dp = wp["strategies"][0]["values"]["deflection_mm"].as_f64().unwrap();
+    assert!(dp > d * 20.0, "{d} {dp}");
+    assert!(fails(&mut s, "cam.workholding", json!({"strategy": "glue"})).contains("unknown strategy"));
+}
+
+#[test]
+fn workholding_finds_a_vise_grip_on_a_block_and_a_waist_for_tabs() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 40, "width": 30, "height": 10, "body_name": "Block"}));
+    let w = run(&mut s, "cam.workholding", json!({"machine": "carvera"}));
+    let by = |id: &str| w["strategies"].as_array().unwrap().iter().find(|st| st["id"] == id).cloned().unwrap();
+    // Parallel walls 30 or 40 apart, with all of their 10 mm height to grip.
+    let vise = by("vise");
+    assert_eq!(vise["feasible"], true, "{vise:#}");
+    assert!(vise["values"]["grip_mm"].as_f64().unwrap() >= 9.9, "{vise:#}");
+    // A block's edge is a wall from top to bottom: no single waist height to need, so tabs work.
+    assert_eq!(by("tabs")["feasible"], true, "{:#}", by("tabs"));
+    // No hole: no pin.
+    assert_eq!(by("pin")["feasible"], false);
+}

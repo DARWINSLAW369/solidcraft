@@ -324,6 +324,11 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("cam")
         .params("setup?: id (default the first; its WCS, bodies, stock and machine); bodies?: body names; machine?: a machine id (cam.machine.list) to judge against instead of the setup's; material?: aluminium | wood | plastic (default aluminium: the cutting speed small tools should reach); tolerance? (0.02); faces?: true to list every face with its role and the directions that reach it. Returns the part's features (pockets, steps, holes, bosses, islands, free-form regions, undercuts, each with its faces and numbers: depths, the largest roughing and finishing tools, inside radii), the share each of ±x, ±y, ±z reaches, the fewest directions that reach everything, the limits the features put on the tools, the fit against the machine, and a notice with issues (undercut, sharp_inside_corner, deep_narrow, needs_second_side, exceeds_work_area, gantry_room…). Facts only: nothing is changed")
         .noundo(),
+    CommandSpec::new("cam.workholding", "Workholding", workholding)
+        .at("MANUFACTURE", "INSPECT")
+        .icon("cam")
+        .params("setup?: id (default the first; its WCS gives the frame: +z is the main tool axis); bodies?: body names; machine?: a machine id to judge against instead of the setup's; material?: aluminium | wood | plastic (default the job's); tool_diameter? (mm, default the largest flat end mill among the tools, else 6): the ring cut round a part held in a frame; finishing_force? (N, default 10); deflection_limit? (mm, default 0.02); strategy?: tabs | sprues | pin | vise | stub | rotary (just that one): compares the ways to hold the part before planning operations — a frame with a web and tabs, a frame with sprues, a pin through a hole of the part with its boss clamped, a vise on the part's parallel faces, a stub of stock in a vise, a stub in a rotary chuck. Each is checked against the part and the machine and costed in points (hand_finish, setups, extra_cut, deflection: how far the far end of a part held at one end bends under a finishing cut, location, fixture), with its setups in order, what is finished by hand, the fixture bodies to add (in design coordinates: boxes and cylinders for solid.box and solid.cylinder, each naming the setups it belongs in) and issues (no_waist, flex, no_rotary…). Best first, with the one recommended. Facts and costs only: nothing is changed")
+        .noundo(),
     CommandSpec::new("cam.inspect", "Inspect Manufacturing", inspect).at("MANUFACTURE", "INSPECT").icon("cam").params("the manufacturing model in brief: tools, setups, operations, what is generated and what needs attention").noundo(),
 ];
 
@@ -3012,8 +3017,19 @@ fn notices(s: &mut Session, p: &Value) -> Result<Value> {
 /// What a part asks of the machining (`cam.analyze`): its features, which directions reach each
 /// face, the limits the features put on the tools, and the fit, against the setup's machine
 /// (or one named). Facts only; docs/cam-ai-planning.md step 2.
-fn analyze(s: &mut Session, p: &Value) -> Result<Value> {
-    let cmd = "cam.analyze";
+/// What `cam.analyze` and `cam.workholding` read: the setup (or the design's own axes), the
+/// machine, the material, each body's mesh and exact surfaces in the setup's frame, and the stock.
+struct PartInputs {
+    setup: Option<Setup>,
+    machine: cam::machine::Machine,
+    material: cam::kits::Material,
+    speed: f64,
+    tol: f64,
+    locals: Vec<(String, Mesh, Vec<cam::analyze::Surface>)>,
+    stock: Option<(Vec3, Vec3)>,
+}
+
+fn part_inputs(s: &mut Session, p: &Value, cmd: &str) -> Result<PartInputs> {
     let tol = num(p, "tolerance").filter(|t| t.is_finite() && *t > 0.0).unwrap_or(0.02).clamp(0.002, 1.0);
     // The setup gives the frame, the bodies, the stock and the machine; without one, the
     // design's bodies in its own axes.
@@ -3041,7 +3057,7 @@ fn analyze(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let material = match str_(p, "material") {
         Some(m) => cam::kits::Material::parse(m).ok_or_else(|| bad(cmd, format!("unknown material `{m}`: aluminium | wood | plastic")))?,
-        None => cam::kits::Material::Aluminium,
+        None => s.doc.manufacture.material.unwrap_or_default(),
     };
     // Cutting speeds (m/min) the smallest tools should reach.
     let speed = match material {
@@ -3088,11 +3104,17 @@ fn analyze(s: &mut Session, p: &Value) -> Result<Value> {
     if locals.is_empty() {
         return Err(bad(cmd, "there is no body to analyse: the setup's bodies are empty or hidden"));
     }
-    let inputs: Vec<cam::analyze::BodyInput> = locals.iter().map(|(n, m, f)| cam::analyze::BodyInput { name: n, mesh: m, surfaces: f }).collect();
     let stock = setup.as_ref().and_then(|st| stock_shape(s, st).ok()).map(|sh| {
         let b = sh.bounds();
         (b.min, b.max)
     });
+    Ok(PartInputs { setup, machine, material, speed, tol, locals, stock })
+}
+
+fn analyze(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "cam.analyze";
+    let PartInputs { setup, machine, speed, tol, locals, stock, .. } = part_inputs(s, p, cmd)?;
+    let inputs: Vec<cam::analyze::BodyInput> = locals.iter().map(|(n, m, f)| cam::analyze::BodyInput { name: n, mesh: m, surfaces: f }).collect();
     let mut a = cam::analyze::analyze(&inputs, &machine, stock, speed, tol).map_err(|e| engine_err(cmd, e))?;
     if !machine.is_known() {
         a.notice.issue(machine.unknown_issue());
@@ -3108,6 +3130,78 @@ fn analyze(s: &mut Session, p: &Value) -> Result<Value> {
     {
         o.remove("faces");
     }
+    Ok(out)
+}
+
+fn workholding(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "cam.workholding";
+    let only = match str_(p, "strategy") {
+        Some(id) if ["tabs", "sprues", "pin", "vise", "stub", "rotary"].contains(&id) => Some(id.to_string()),
+        Some(id) => return Err(bad(cmd, format!("unknown strategy `{id}`: tabs | sprues | pin | vise | stub | rotary"))),
+        None => None,
+    };
+    let PartInputs { setup, machine, material, speed, tol, locals, stock } = part_inputs(s, p, cmd)?;
+    let inputs: Vec<cam::analyze::BodyInput> = locals.iter().map(|(n, m, f)| cam::analyze::BodyInput { name: n, mesh: m, surfaces: f }).collect();
+    let analysis = cam::analyze::analyze(&inputs, &machine, stock, speed, tol).map_err(|e| engine_err(cmd, e))?;
+    let positive = |key: &str| num(p, key).filter(|v| v.is_finite() && *v > 0.0);
+    let tool_diameter = positive("tool_diameter").unwrap_or_else(|| {
+        s.doc
+            .manufacture
+            .tools
+            .tools
+            .iter()
+            .filter(|t| matches!(t.kind, ToolKind::FlatEnd))
+            .map(|t| t.diameter)
+            .filter(|d| d.is_finite() && *d > 0.0)
+            .fold(0.0, f64::max)
+    });
+    let opts = cam::workholding::Options {
+        tool_diameter: if tool_diameter > 0.0 { tool_diameter } else { 6.0 },
+        modulus: material.modulus(),
+        finishing_force: positive("finishing_force").unwrap_or(10.0),
+        deflection_limit: positive("deflection_limit").unwrap_or(0.02),
+        stock,
+    };
+    let mut plan = cam::workholding::plan(&inputs, &analysis, &machine, &opts).map_err(|e| engine_err(cmd, e))?;
+    // Fixtures go into the design: from the setup's frame to design coordinates.
+    let wcs = setup.as_ref().map_or(Frame::IDENTITY, |st| st.wcs);
+    for st in &mut plan.strategies {
+        for f in &mut st.fixtures {
+            match f {
+                cam::workholding::Fixture::Box { min, max, .. } => {
+                    let (a, b) = (Vec3::new(min[0], min[1], min[2]), Vec3::new(max[0], max[1], max[2]));
+                    let mut bb = Aabb3::default();
+                    for x in [a.x, b.x] {
+                        for y in [a.y, b.y] {
+                            for z in [a.z, b.z] {
+                                bb.add(wcs.to_world(Vec3::new(x, y, z)));
+                            }
+                        }
+                    }
+                    *min = [r3(bb.min.x), r3(bb.min.y), r3(bb.min.z)];
+                    *max = [r3(bb.max.x), r3(bb.max.y), r3(bb.max.z)];
+                }
+                cam::workholding::Fixture::Cylinder { base, axis, .. } => {
+                    let b = wcs.to_world(Vec3::new(base[0], base[1], base[2]));
+                    let d = wcs.dir_to_world(Vec3::new(axis[0], axis[1], axis[2]));
+                    *base = [r3(b.x), r3(b.y), r3(b.z)];
+                    *axis = [r3(d.x), r3(d.y), r3(d.z)];
+                }
+            }
+        }
+    }
+    if let Some(id) = &only {
+        plan.strategies.retain(|st| st.id == id.as_str());
+    }
+    if !machine.is_known() {
+        plan.notice.issue(machine.unknown_issue());
+    }
+    let mut out = serde_json::to_value(&plan).map_err(|e| EngineError::Other(e.to_string()))?;
+    out["notice"] = plan.notice.to_json();
+    out["machine"] = json!(machine.name);
+    out["material"] = json!(material.name());
+    out["setup"] = json!(setup.as_ref().map(|st| st.id));
+    out["frame"] = json!("steps and directions in the setup's WCS (+z its tool axis); fixtures in design coordinates");
     Ok(out)
 }
 

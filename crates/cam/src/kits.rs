@@ -27,6 +27,16 @@ impl Material {
         })
     }
 
+    /// Young's modulus (N/mm²), for how far a part held at one end bends: a 6061 class alloy,
+    /// hardwood along the grain, an engineering plastic such as acetal.
+    pub fn modulus(self) -> f64 {
+        match self {
+            Material::Aluminium => 69_000.0,
+            Material::Wood => 10_000.0,
+            Material::Plastic => 2_800.0,
+        }
+    }
+
     /// Chip load per tooth (mm) for a 3.175 mm cutter: single-flute flat, two-flute ball.
     fn chip_load(self) -> (f64, f64) {
         match self {

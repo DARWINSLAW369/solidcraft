@@ -45,6 +45,7 @@ pub mod simulate;
 
 pub mod tool;
 pub mod toolpath;
+pub mod workholding;
 
 pub use frame::Frame;
 pub use notice::{Issue, Notice, Severity};

@@ -52,6 +52,18 @@ reach everything: one setup each on a 3-axis machine), tool `limits` and the `fi
 map every feature to an operation, and answer each issue (`undercut`, `sharp_inside_corner`,
 `deep_narrow`, `needs_second_side`, `exceeds_work_area`, `gantry_room`) before building.
 
+## Choose how the part is held, before the operations
+`cam.workholding {setup?, material?}` compares the ways to hold the part and changes nothing:
+`tabs` (a frame and web; needs a waist where the edge is at one height), `sprues`, `pin` (a pin
+through a hole of the part, its boss's flat sides clamped), `vise` (two parallel walls),
+`stub` (a stub of stock in a vise) and `rotary` (a stub in a rotary chuck). Each is feasible or
+not with a `why`, costed in points (`hand_finish`, `setups`, `extra_cut`, `deflection`,
+`location`, `fixture`), with its setups in order and the fixture bodies to add (design
+coordinates, for `solid.box` / `solid.cylinder`, each naming its setups). Best first, with
+`recommended`. Read `deflection_mm`: a part held at one end bends under the cut, and a `flex`
+issue means light finishing cuts from the far end back, or another hold. Tell the person the
+top two and why; their fixtures and priorities decide a close call.
+
 ## Build
 - **Tools** first: `cam.tool.add {name, kind, diameter, flute_length, overall_length, feeds}`.
   Kinds: `flat`, `ball`, `bull` (+ `corner_radius`), `chamfer`, `drill`, `spot`, `tapered_ball`.

@@ -197,6 +197,41 @@ Issues come with codes:
 - `spindle_too_slow_for_small_tool`;
 - `machine_unknown`.
 
+## Choosing how the part is held (`cam.workholding`)
+
+How a part is held decides its setups, its stock, what is finished by hand and how far it bends
+under the cut, so the plan starts with it. `cam.workholding {setup?, bodies?, machine?,
+material?, tool_diameter?, finishing_force?, deflection_limit?, strategy?}` checks six ways to
+hold the part against its geometry and the machine, and changes nothing:
+- **`tabs`**: the part stays in a frame of stock, held by a web and tabs. It needs a waist: the
+  part's edge within about a millimetre of one height round its outline (`no_waist` otherwise).
+- **`sprues`**: the frame again, with small bars to the part where its edge is thickest. It holds
+  any outline; each sprue is sawn off and filed.
+- **`pin`**: a pin through a hole of the part, the flat sides of the boss round it clamped
+  between washers on a post. The boss is finished first from the solid stock, then the part
+  turns on the pin; it is found again exactly each time and nothing is left to file.
+- **`vise`**: a vise on two parallel walls of the part, the tool from above and, turned over,
+  from below.
+- **`stub`**: a stub of stock left on the stiffer end of the part's long axis, gripped in a vise
+  and cut off at the end.
+- **`rotary`**: the stub in a rotary module's chuck, every side in one setup (`no_rotary` when
+  the machine has none, `too_big_for_rotary` when the part does not fit it).
+
+A part held at one end bends: for `pin`, `stub` and `rotary` the part's thickness is measured
+across sections from the grip to its far end, and the deflection there under a finishing cut
+(default 10 N; the material's modulus from `cam.job.set` or `material`) is integrated over the
+sections as a cantilever. Above `deflection_limit` (default 0.02 mm) a `flex` issue names the
+weakest section.
+
+Each strategy is costed in points so they can be compared: `hand_finish` (spots filed by hand),
+`setups`, `extra_cut` (stock cut only to hold the part, such as the ring round a frame),
+`deflection`, `location` (a turned-over part found again from the stock's box, not a feature of
+the part) and `fixture` (a pin fixture or soft jaws to make). Each cost has its reason; the
+strategies come best first with the one `recommended`, their setups in order, what is finished
+by hand and the fixture bodies to add in design coordinates (boxes and cylinders, each naming
+the setups whose `fixtures` it belongs in). When the two best are within 3 points a
+`close_call` says the person's fixtures and priorities decide.
+
 ## The machine
 
 Every check needs to know the machine. A setup that names none gets a generic machine with no
