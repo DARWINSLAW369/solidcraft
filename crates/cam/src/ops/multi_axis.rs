@@ -143,7 +143,7 @@ fn rotary(_op: &Operation, ctx: &Context, along_axis: bool, stepover: f64, angle
     notice.value("clearance_radius_mm", r3(clearance_r));
     notice.issue(Issue::info(
         "rotary_axis",
-        "the rotary axis is the operation frame's x axis; set the operation orientation so it matches the machine's A axis",
+        "the rotary axis is the operation frame's x axis: the machine's rotary axis through the setup's origin, unless the operation sets an orientation of its own",
     ));
     Ok((tp, notice))
 }

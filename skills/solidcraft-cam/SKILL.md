@@ -80,7 +80,7 @@ top two and why; their fixtures and priorities decide a close call.
   - holes: `drill` or `bore` on `holes` (points on the cylindrical faces, or points + diameter);
   - surfaces: `parallel`, `contour3d`, `scallop`, `pencil`, `steep_shallow`;
   - 3+2: any operation with `orientation: {origin, z, x}` relative to the WCS;
-  - 4-axis: `rotary` (the operation frame's x is the rotary axis; set `orientation` so it is);
+  - 4-axis: `rotary` (it turns about the machine's rotary axis through the setup's origin, so put the origin on the axis centreline; `orientation` only to override);
   - 5-axis: `swarf` on `chains`, `multi_axis_contour`, `flow` on `rails`; use a ball tool.
 - **Boundaries**: area operations machine within `boundary` (default `auto`: roughing around the
   part's outline, finishing on the part, a selection bounds it). Read the notice's `boundary`

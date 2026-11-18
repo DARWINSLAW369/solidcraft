@@ -2030,6 +2030,14 @@ struct Prepared {
     generation: u64,
 }
 
+/// The frame an operation is generated in, relative to the setup's WCS: its own orientation,
+/// else for a rotary or turning operation the machine's rotary axis through the setup's origin
+/// (so a machine whose A axis lies along Y needs no orientation on every operation), else the
+/// WCS.
+fn op_frame(st: &Setup, op: &Operation) -> Frame {
+    op.orientation.or_else(|| if op.kind.axes() == 4 { st.machine.rotary_frame() } else { None }).unwrap_or(Frame::IDENTITY)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn prepare_one(
     s: &Session,
@@ -2049,7 +2057,7 @@ fn prepare_one(
         .get(op.tool)
         .cloned()
         .ok_or_else(|| bad(cmd, format!("operation {} uses tool {} which does not exist", op.id, op.tool)))?;
-    let orient = op.orientation.unwrap_or(Frame::IDENTITY);
+    let orient = op_frame(st, op);
     let to_op = |p: Vec3| orient.to_local(st.wcs.to_local(p));
     let dir_to_op = |d: Vec3| orient.dir_to_local(st.wcs.dir_to_local(d));
     let mut notice = Notice::default();
@@ -2378,7 +2386,7 @@ pub fn prepare_generate(s: &Session, p: &Value) -> Result<GenerateJob> {
                     kind,
                     tool_id: op.tool,
                     setup: st.id,
-                    frame: op.orientation.unwrap_or(Frame::IDENTITY),
+                    frame: op_frame(st, op),
                     signature: sig,
                     generation,
                     error: e.to_string(),

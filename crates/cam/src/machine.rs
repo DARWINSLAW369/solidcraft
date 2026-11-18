@@ -458,6 +458,27 @@ impl Machine {
         }
     }
 
+    /// The frame a rotary or turning operation works in when it names no orientation of its
+    /// own, relative to the setup's WCS: its origin at the setup's origin (moved to the rotary
+    /// axis's pivot, which is relative to it), its x axis along the machine's rotary axis and
+    /// its z axis the WCS's, square to it. None when that is the WCS itself (an A axis along
+    /// X through the origin), or for a machine without one table rotary axis square to Z.
+    pub fn rotary_frame(&self) -> Option<crate::frame::Frame> {
+        let Kinematics::FourAxis { rotary } = &self.kinematics else { return None };
+        if !rotary.on_table {
+            return None;
+        }
+        let d = rotary.direction.normalized()?;
+        let up = Vec3::new(0.0, 0.0, 1.0);
+        if d.dot(up).abs() > 1e-6 {
+            return None;
+        }
+        if d.dist(Vec3::new(1.0, 0.0, 0.0)) < 1e-9 && rotary.pivot.len() < 1e-9 {
+            return None;
+        }
+        crate::frame::Frame::new(rotary.pivot, up, d).ok()
+    }
+
     pub fn rotaries(&self) -> Vec<RotaryAxis> {
         match &self.kinematics {
             Kinematics::ThreeAxis => Vec::new(),

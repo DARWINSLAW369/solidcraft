@@ -140,7 +140,7 @@ fn face(ctx: &Context, stepdown: f64, position: f64) -> Result<(Toolpath, Notice
     notice.value("turns", turns);
     notice.value("face_x_mm", r3(target));
     notice.value("stock_radius_mm", r3(stock_r));
-    notice.issue(Issue::info("rotary_axis", "the rotary axis is the operation frame's x axis; the part turns on A while the tool stands vertical"));
+    notice.issue(Issue::info("rotary_axis", "the rotary axis is the operation frame's x axis (the machine's rotary axis through the setup's origin, unless the operation sets an orientation); the part turns on it while the tool stands vertical"));
     Ok((tp, notice))
 }
 

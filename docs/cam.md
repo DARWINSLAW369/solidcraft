@@ -281,6 +281,11 @@ power (0..1); the `makera` post enters laser mode with `M321`, puts the beam at 
 `M322`. The `grbl` post uses `M4` with `S` 0..1000. A laser operation on a machine without a
 module is a `no_laser` error; the stock simulation leaves laser work alone.
 
+Rotary and turning operations turn about the machine's rotary axis through the setup's origin:
+put the origin on the axis's centreline, and an operation with no `orientation` takes its frame
+from there, its x along the machine's rotary axis (X for the Carvera's module, Y for a machine
+whose A axis lies along Y). An `orientation` on the operation overrides it.
+
 Turning on the rotary axis (a 4-axis machine; the part turns on A while a vertical cutter
 cuts it like a lathe tool): `turn_face` faces the part's end back in steps, `turn_profile` is
 the model's profile along the axis, `turn_groove` cuts a groove of a width and depth, and

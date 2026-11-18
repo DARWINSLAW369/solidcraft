@@ -240,6 +240,58 @@ fn rotary_part_posts_with_a_words() {
 }
 
 #[test]
+fn a_rotary_along_y_takes_its_axis_from_the_machine_through_the_setup_origin() {
+    let mut s = Session::default();
+    // A shaft along Y with a flat on it, for a machine whose A axis lies along Y.
+    run(&mut s, "solid.cylinder", json!({"diameter": 20, "height": 60, "base": [0, -30, 0], "axis": "Y", "body_name": "Shaft"}));
+    run(&mut s, "solid.box", json!({"length": 30, "width": 20, "height": 5, "corner": [-15, -10, 7], "operation": "cut", "targets": ["Shaft"]}));
+    let ball = run(&mut s, "cam.tool.add", json!({"name": "4 mm ball", "kind": "ball", "diameter": 4}))["id"].as_u64().unwrap();
+    let machine = json!({
+        "name": "Router with A along Y", "work_area": [600, 600, 200], "spindle_rpm_max": 24000,
+        "kinematics": {"kind": "four_axis", "rotary": {"name": "A", "direction": [0, 1, 0], "min_deg": -99999, "max_deg": 99999, "on_table": true}},
+    });
+    let setup = run(
+        &mut s,
+        "cam.setup.create",
+        json!({"name": "Rotary", "machine": machine, "stock": {"mode": "relative_cylinder", "axis": "y", "radial": 1, "start": 0, "end": 0}}),
+    )["id"]
+        .as_u64()
+        .unwrap();
+    // No orientation: the operation turns about the machine's axis, not the WCS's x.
+    let op = run(
+        &mut s,
+        "cam.operation.add",
+        json!({"setup": setup, "type": "rotary", "tool": ball, "along_axis": true, "stepover": 15, "tolerance": 0.05}),
+    );
+    let g = run(&mut s, "cam.generate", json!({"setup": setup}));
+    assert_eq!(g["setups"][0]["operations"][0]["status"], "ok", "{g}");
+    let tp = run(&mut s, "cam.toolpath", json!({"operation": op["id"], "limit": 50000}));
+    let cuts: Vec<&Value> = tp["moves"].as_array().unwrap().iter().filter(|m| m[0] == "cut").collect();
+    assert!(cuts.len() > 20, "{}", cuts.len());
+    for m in &cuts {
+        // Radial about Y: distance from the Y axis is the surface plus the ball, 7 on the flat.
+        let r = (m[1].as_f64().unwrap().powi(2) + m[3].as_f64().unwrap().powi(2)).sqrt();
+        assert!((6.9..=10.2).contains(&r), "{m}");
+        assert!(m[2].as_f64().unwrap().abs() <= 30.0 + 1e-6, "{m}");
+    }
+    let post = run(&mut s, "cam.post", json!({"setup": setup}));
+    let code = post["gcode"].as_str().unwrap();
+    assert!(code.lines().any(|l| l.split_whitespace().any(|w| w.starts_with('A'))), "{}", &code[..code.len().min(800)]);
+    // After the table turns, every posted point lies on the machine's YZ plane.
+    for l in code.lines().filter(|l| l.starts_with("G1") || l.starts_with("G0") || l.starts_with('X')) {
+        if let Some(x) = l.split_whitespace().find(|w| w.starts_with('X')) {
+            assert!(x[1..].parse::<f64>().unwrap().abs() < 1e-3, "{l}");
+        }
+    }
+    // An orientation the operation names still wins.
+    let id = op["id"].as_u64().unwrap();
+    run(&mut s, "cam.operation.set", json!({"operation": id, "orientation": {"origin": [0, 0, 0], "z": [0, 0, 1], "x": [1, 0, 0]}}));
+    run(&mut s, "cam.generate", json!({"setup": setup}));
+    let e = fails(&mut s, "cam.post", json!({"setup": setup}));
+    assert!(e.contains("A axis can reach"), "{e}");
+}
+
+#[test]
 fn swarf_and_indexed_orientation() {
     let mut s = block();
     let flat = add_flat(&mut s, 6.0);
