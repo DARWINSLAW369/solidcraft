@@ -379,9 +379,9 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         .show(ctx, can, |ui| {
             // Minimize folds the form down to this button and OK / Cancel, out of the way while
             // zooming in on the model; Restore brings the fields back as they were.
-            let fold = if ed.minimized { "▼  Restore" } else { "▲  Minimize" };
+            let (arrow, fold) = if ed.minimized { ("▼", "Restore") } else { ("▲", "Minimize") };
             let hint = if ed.minimized { "Show the form's fields again" } else { "Fold the form away to see more of the model" };
-            if crate::ui_kit::button(ui, solidcraft_ui_text::tr_label(fold), crate::ui_kit::Button::Normal)
+            if crate::ui_kit::button(ui, format!("{arrow}  {}", solidcraft_ui_text::tr_label(fold)), crate::ui_kit::Button::Normal)
                 .on_hover_text(solidcraft_ui_text::tr_label(hint))
                 .clicked()
             {

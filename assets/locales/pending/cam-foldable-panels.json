@@ -1,0 +1,72 @@
+{
+  "en": {
+    "Hide": "Hide",
+    "Show Manufacture": "Show Manufacture",
+    "Open the Manufacture panel": "Open the Manufacture panel",
+    "Fold the Manufacture panel away": "Fold the Manufacture panel away",
+    "Minimize": "Minimize",
+    "Restore": "Restore",
+    "Show the form's fields again": "Show the form's fields again",
+    "Fold the form away to see more of the model": "Fold the form away to see more of the model"
+  },
+  "ar": {
+    "Hide": "إخفاء",
+    "Show Manufacture": "إظهار التصنيع",
+    "Open the Manufacture panel": "فتح لوحة التصنيع",
+    "Fold the Manufacture panel away": "طيّ لوحة التصنيع",
+    "Minimize": "تصغير",
+    "Restore": "استعادة",
+    "Show the form's fields again": "إظهار حقول النموذج مرة أخرى",
+    "Fold the form away to see more of the model": "طيّ النموذج لرؤية المزيد من المجسّم"
+  },
+  "he": {
+    "Hide": "הסתר",
+    "Show Manufacture": "הצג ייצור",
+    "Open the Manufacture panel": "פתח את חלונית הייצור",
+    "Fold the Manufacture panel away": "קפל את חלונית הייצור",
+    "Minimize": "מזער",
+    "Restore": "שחזר",
+    "Show the form's fields again": "הצג שוב את שדות הטופס",
+    "Fold the form away to see more of the model": "קפל את הטופס כדי לראות יותר מהמודל"
+  },
+  "ja": {
+    "Hide": "隠す",
+    "Show Manufacture": "製造を表示",
+    "Open the Manufacture panel": "製造パネルを開く",
+    "Fold the Manufacture panel away": "製造パネルを折りたたむ",
+    "Minimize": "最小化",
+    "Restore": "元に戻す",
+    "Show the form's fields again": "フォームの項目を再表示",
+    "Fold the form away to see more of the model": "フォームを折りたたんでモデルを広く表示"
+  },
+  "vi": {
+    "Hide": "Ẩn",
+    "Show Manufacture": "Hiện Gia công chế tạo",
+    "Open the Manufacture panel": "Mở bảng Gia công chế tạo",
+    "Fold the Manufacture panel away": "Thu gọn bảng Gia công chế tạo",
+    "Minimize": "Thu nhỏ",
+    "Restore": "Khôi phục",
+    "Show the form's fields again": "Hiện lại các trường của biểu mẫu",
+    "Fold the form away to see more of the model": "Thu gọn biểu mẫu để thấy rõ mô hình hơn"
+  },
+  "zh": {
+    "Hide": "隐藏",
+    "Show Manufacture": "显示制造",
+    "Open the Manufacture panel": "打开制造面板",
+    "Fold the Manufacture panel away": "收起制造面板",
+    "Minimize": "最小化",
+    "Restore": "还原",
+    "Show the form's fields again": "重新显示表单字段",
+    "Fold the form away to see more of the model": "收起表单以查看更多模型"
+  },
+  "de": {
+    "Hide": "Ausblenden",
+    "Show Manufacture": "Fertigung einblenden",
+    "Open the Manufacture panel": "Fertigungsbereich öffnen",
+    "Fold the Manufacture panel away": "Fertigungsbereich einklappen",
+    "Minimize": "Minimieren",
+    "Restore": "Wiederherstellen",
+    "Show the form's fields again": "Die Felder des Formulars wieder anzeigen",
+    "Fold the form away to see more of the model": "Formular einklappen, um mehr vom Modell zu sehen"
+  }
+}
