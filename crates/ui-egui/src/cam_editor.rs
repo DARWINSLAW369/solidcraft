@@ -377,14 +377,14 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         .keep_open_on_escape()
         .actions("OK", "Cancel", Some("Apply"))
         .show(ctx, can, |ui| {
-            // Minimize folds the form down to this button and OK / Cancel, out of the way while
+            // Minimize folds the form down to this toggle and OK / Cancel, out of the way while
             // zooming in on the model; Restore brings the fields back as they were.
-            let (arrow, fold) = if ed.minimized { ("▼", "Restore") } else { ("▲", "Minimize") };
-            let hint = if ed.minimized { "Show the form's fields again" } else { "Fold the form away to see more of the model" };
-            if crate::ui_kit::button(ui, format!("{arrow}  {}", solidcraft_ui_text::tr_label(fold)), crate::ui_kit::Button::Normal)
-                .on_hover_text(solidcraft_ui_text::tr_label(hint))
-                .clicked()
-            {
+            let (fold, hint) = if ed.minimized {
+                ("manufacture.form.restore", "manufacture.form.restore_tip")
+            } else {
+                ("manufacture.form.minimize", "manufacture.form.minimize_tip")
+            };
+            if crate::manufacture_workspace::fold_toggle(ui, !ed.minimized, solidcraft_ui_text::tr(fold), solidcraft_ui_text::tr(hint)) {
                 ed.minimized = !ed.minimized;
             }
             if ed.minimized {

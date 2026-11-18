@@ -219,16 +219,45 @@ fn set_folded(ctx: &egui::Context, on: bool) {
     ctx.data_mut(|d| d.insert_persisted(folded_id(), on));
 }
 
-/// The folded panel: a button at the top right that opens it again.
-const FOLDED_SIZE: egui::Vec2 = egui::vec2(170.0, 44.0);
+/// The folded panel's inner margin, round its Show toggle.
+const FOLDED_MARGIN: f32 = 10.0;
+
+/// A fold toggle: the kit's disclosure chevron (down while the content shows, right while it is
+/// folded) beside a plain text label; a click on either toggles. True when clicked.
+pub(crate) fn fold_toggle(ui: &mut egui::Ui, open: bool, text: &str, tip: &str) -> bool {
+    use crate::ui_kit::BackingTooltipExt as _;
+    let t = Tokens::get();
+    ui.horizontal(|ui| {
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(t.form_section_icon_size, t.form_section_icon_size), egui::Sense::hover());
+        let arrow = crate::ui_kit::disclosure_button_at(ui, rect, open, tip);
+        let label = ui.add(egui::Label::new(text).sense(egui::Sense::click())).backing_on_hover_text(tip);
+        arrow.clicked() || label.clicked()
+    })
+    .inner
+}
+
+/// The folded panel's size: its Show toggle measured in the current language, so a longer
+/// translation is not clipped.
+fn folded_size(ctx: &egui::Context) -> egui::Vec2 {
+    let t = Tokens::get();
+    let font = egui::TextStyle::Body.resolve(&ctx.global_style());
+    let text = ctx
+        .layer_painter(egui::LayerId::background())
+        .layout_no_wrap(solidcraft_ui_text::tr("manufacture.panel.show").to_owned(), font, Color32::PLACEHOLDER)
+        .size();
+    let spacing = ctx.global_style().spacing.item_spacing.x;
+    let row = text.y.max(t.form_section_icon_size);
+    egui::vec2(t.form_section_icon_size + spacing + text.x, row) + egui::Vec2::splat(2.0 * FOLDED_MARGIN)
+}
 
 /// The right-hand strip the panel takes, between the ribbon and the status bar (folded, just
-/// its Show button's corner).
+/// its Show toggle's corner).
 fn panel_rect(app: &SolveApp, ctx: &egui::Context, domain: egui::Rect) -> egui::Rect {
     let full = full_panel_rect(app, ctx, domain);
     if folded(ctx) {
-        let left = (full.right() - FOLDED_SIZE.x).max(full.left());
-        let bottom = (full.top() + FOLDED_SIZE.y).min(full.bottom());
+        let size = folded_size(ctx);
+        let left = (full.right() - size.x.ceil()).max(full.left());
+        let bottom = (full.top() + size.y.ceil()).min(full.bottom());
         return egui::Rect::from_min_max(egui::pos2(left, full.top()), egui::pos2(full.right(), bottom));
     }
     full
@@ -267,17 +296,13 @@ pub fn panel(app: &mut SolveApp, ui: &mut egui::Ui) {
     let mut host = ui.new_child(egui::UiBuilder::new().id_salt("sc_manufacture").max_rect(rect));
     host.set_clip_rect(rect);
     crate::ui_kit::Container::paint_frame(host.painter(), frame, rect);
-    // Folded: only a button that opens the panel again.
+    // Folded: only the toggle that opens the panel again.
     if folded(ui.ctx()) {
-        let mut inner = host.new_child(egui::UiBuilder::new().max_rect(rect.shrink(6.0)));
-        inner.centered_and_justified(|ui| {
-            if crate::ui_kit::button(ui, format!("◀  {}", solidcraft_ui_text::tr_label("Show Manufacture")), crate::ui_kit::Button::Normal)
-                .on_hover_text(solidcraft_ui_text::tr_label("Open the Manufacture panel"))
-                .clicked()
-            {
-                set_folded(ui.ctx(), false);
-            }
-        });
+        let mut inner = host.new_child(egui::UiBuilder::new().max_rect(rect.shrink(FOLDED_MARGIN)));
+        let show = solidcraft_ui_text::tr("manufacture.panel.show");
+        if fold_toggle(&mut inner, false, show, solidcraft_ui_text::tr("manufacture.panel.show_tip")) {
+            set_folded(ui.ctx(), false);
+        }
         return;
     }
     let inner = rect.shrink(10.0);
@@ -294,10 +319,8 @@ pub fn panel(app: &mut SolveApp, ui: &mut egui::Ui) {
                 ui.horizontal(|ui| {
                     ui.heading(solidcraft_ui_text::tr_label("Manufacture"));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if crate::ui_kit::button(ui, format!("{}  ▶", solidcraft_ui_text::tr_label("Hide")), crate::ui_kit::Button::Normal)
-                            .on_hover_text(solidcraft_ui_text::tr_label("Fold the Manufacture panel away"))
-                            .clicked()
-                        {
+                        let hide = solidcraft_ui_text::tr("manufacture.panel.hide");
+                        if fold_toggle(ui, true, hide, solidcraft_ui_text::tr("manufacture.panel.hide_tip")) {
                             set_folded(ui.ctx(), true);
                         }
                     });
@@ -315,9 +338,9 @@ pub fn panel(app: &mut SolveApp, ui: &mut egui::Ui) {
                     }
                     ui.add_space(t.space_8);
                     // A long tool library would push the setups off the panel: the list folds
-                    // (closed by default; egui remembers the choice).
-                    let tools_title = format!("{} ({})", solidcraft_ui_text::tr_label("Tools"), m.tools.tools.len());
-                    egui::CollapsingHeader::new(RichText::new(tools_title).strong()).id_salt("sc_manufacture_tools").default_open(false).show(ui, |ui| {
+                    // (closed by default; the kit's section remembers the choice).
+                    let tools = solidcraft_ui_text::tr_label("Tools");
+                    crate::ui_kit::section_count(ui, "sc_manufacture_tools", tools, false, Some(m.tools.tools.len()), |ui| {
                         for tool in &m.tools.tools {
                             let kind =
                                 serde_json::to_value(tool.kind).ok().and_then(|v| v["kind"].as_str().map(str::to_string)).unwrap_or_default();
