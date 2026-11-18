@@ -1,0 +1,30 @@
+{
+  "en": {
+    "Edit setup and machine": "Edit setup and machine",
+    "Open this setup's form: stock, origin, and the machine's numbers": "Open this setup's form: stock, origin, and the machine's numbers"
+  },
+  "ar": {
+    "Edit setup and machine": "تحرير الإعداد والآلة",
+    "Open this setup's form: stock, origin, and the machine's numbers": "فتح نموذج هذا الإعداد: الخامة، ونقطة الأصل، وأرقام الآلة"
+  },
+  "he": {
+    "Edit setup and machine": "ערוך הגדרה ומכונה",
+    "Open this setup's form: stock, origin, and the machine's numbers": "פתח את הטופס של ההגדרה: חומר הגלם, נקודת האפס ונתוני המכונה"
+  },
+  "ja": {
+    "Edit setup and machine": "セットアップと機械を編集",
+    "Open this setup's form: stock, origin, and the machine's numbers": "このセットアップのフォームを開く: 素材、原点、機械の数値"
+  },
+  "vi": {
+    "Edit setup and machine": "Sửa thiết lập và máy",
+    "Open this setup's form: stock, origin, and the machine's numbers": "Mở biểu mẫu của thiết lập này: phôi, gốc tọa độ và các thông số của máy"
+  },
+  "zh": {
+    "Edit setup and machine": "编辑设置和机床",
+    "Open this setup's form: stock, origin, and the machine's numbers": "打开此设置的表单：毛坯、原点和机床参数"
+  },
+  "de": {
+    "Edit setup and machine": "Aufspannung und Maschine bearbeiten",
+    "Open this setup's form: stock, origin, and the machine's numbers": "Das Formular dieser Aufspannung öffnen: Rohteil, Nullpunkt und die Werte der Maschine"
+  }
+}
