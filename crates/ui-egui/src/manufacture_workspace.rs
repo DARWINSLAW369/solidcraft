@@ -57,6 +57,50 @@ pub fn start(app: &mut SolveApp, id: &str) -> bool {
         return false;
     }
     let setup = selected_setup(app);
+    // The Setup panel's buttons open forms: labelled fields, dropdowns and OK / Cancel (the
+    // form's JSON tab and the command box still take the raw call).
+    match id {
+        "cam.tool.add" => {
+            crate::cam_editor::open_new_tool(app);
+            return true;
+        }
+        "cam.setup.create" => {
+            crate::cam_editor::open_new_setup(app);
+            return true;
+        }
+        "cam.tool.kit" => {
+            let mut params = json!({"kit": "makera_essential", "material": "aluminium"});
+            if let Some(s) = setup {
+                params["setup"] = json!(s);
+            }
+            crate::cam_editor::open_run(app, "cam.tool.kit", params);
+            return true;
+        }
+        "cam.machine.set" => {
+            let Some(s) = setup else {
+                app.set_status("Create a setup first: its form lets you pick the machine too.".to_string(), false);
+                crate::cam_editor::open_new_setup(app);
+                return true;
+            };
+            // Start from the setup's own machine when it is a known one.
+            let current = app.session.doc.manufacture.setup(s).map(|st| st.machine.name.clone()).unwrap_or_default();
+            let machine = solidcraft_engine::cmd::cam::known_machines(&app.session)
+                .into_iter()
+                .find(|e| e.machine.name == current)
+                .map(|e| e.id)
+                .unwrap_or_else(|| "three_axis".to_string());
+            crate::cam_editor::open_run(app, "cam.machine.set", json!({"setup": s, "machine": machine}));
+            return true;
+        }
+        _ => {}
+    }
+    // An operation needs a setup to go into: with none yet, its form comes first.
+    let makes_operation = id.strip_prefix("cam.operation.").is_some_and(|k| !matches!(k, "set" | "remove" | "list" | "kinds" | "move" | "duplicate"));
+    if makes_operation && setup.is_none() {
+        app.set_status("Create a setup first, then pick the operation again.".to_string(), false);
+        crate::cam_editor::open_new_setup(app);
+        return true;
+    }
     let m = &app.session.doc.manufacture;
     let tool = m.tools.tools.first().map(|t| t.id);
     let template = match id {
@@ -98,9 +142,7 @@ pub fn start(app: &mut SolveApp, id: &str) -> bool {
         return true;
     }
     if id == "cam.post" {
-        let name =
-            app.session.doc.manufacture.setups.first().map(|s| s.program.clone()).filter(|n| !n.is_empty()).unwrap_or_else(|| "program".into());
-        app.pick_save_command(&format!("{name}.nc"), &["nc", "gcode", "ngc", "tap"], "cam.post", json!({}));
+        crate::cam_editor::open_post(app, None);
         return true;
     }
     if id == "cam.generate" {
@@ -234,6 +276,8 @@ pub fn reserve(app: &mut SolveApp, ctx: &egui::Context, domain: egui::Rect) {
 pub fn panel(app: &mut SolveApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     let mut run: Option<&'static str> = None;
+    // A setup whose editor (stock, origin, machine) a button asked for.
+    let mut edit_setup: Option<u64> = None;
     let Some(rect) = app.shell.workspace_panels.get(PANEL_ID).copied() else { return };
     let frame = crate::ui_kit::Container::new(ui.ctx(), crate::ui_kit::Surface::Panel).edge_frame(t.panel);
     let mut host = ui.new_child(egui::UiBuilder::new().id_salt("sc_manufacture").max_rect(rect));
@@ -270,6 +314,12 @@ pub fn panel(app: &mut SolveApp, ui: &mut egui::Ui) {
                     for st in &m.setups {
                         ui.add_space(t.space_8);
                         ui.label(RichText::new(format!("{}  ·  {} ({} axes)", st.name, st.machine.name, st.machine.axis_count())).strong());
+                        if crate::ui_kit::button(ui, solidcraft_ui_text::tr_label("Edit setup and machine").to_string(), crate::ui_kit::Button::Normal)
+                            .on_hover_text(solidcraft_ui_text::tr_label("Open this setup's form: stock, origin, and the machine's numbers"))
+                            .clicked()
+                        {
+                            edit_setup = Some(st.id);
+                        }
                         if st.operations.is_empty() {
                             ui.label(RichText::new(solidcraft_ui_text::tr_label("No operations.")).color(t.text_dim));
                         }
@@ -321,5 +371,8 @@ pub fn panel(app: &mut SolveApp, ui: &mut egui::Ui) {
     }
     if let Some(id) = run {
         app.start(id);
+    }
+    if let Some(sid) = edit_setup {
+        crate::browser::cam::edit_setup(app, sid);
     }
 }
