@@ -1504,3 +1504,22 @@ fn workholding_finds_a_vise_grip_on_a_block_and_a_waist_for_tabs() {
     // No hole: no pin.
     assert_eq!(by("pin")["feasible"], false);
 }
+
+#[test]
+fn the_example_shop_library_adds_every_tool_with_its_number() {
+    let lib: Value = serde_json::from_str(include_str!("../../../../examples/cam/rotary-shop-tools.json")).unwrap();
+    let tools = lib["tools"].as_array().unwrap();
+    assert_eq!(tools.len(), 129);
+    let mut s = Session::default();
+    for t in tools {
+        let added = run(&mut s, "cam.tool.add", t.clone());
+        assert_eq!(added["number"], t["number"], "{t}");
+        // A tool is longer than its flutes: there is a shank to hold.
+        assert!(added["overall_length"].as_f64().unwrap() > added["flute_length"].as_f64().unwrap(), "{added}");
+    }
+    let list = run(&mut s, "cam.tool.list", json!({}));
+    let numbers: std::collections::BTreeSet<u64> = list["tools"].as_array().unwrap().iter().map(|t| t["number"].as_u64().unwrap()).collect();
+    assert_eq!(numbers.len(), 129, "two tools share a number");
+    // Only the owner's 10 shop tools carry speeds and feeds; the generic sizes preset nothing.
+    assert_eq!(tools.iter().filter(|t| t.get("feeds").is_some()).count(), 10);
+}
