@@ -1527,3 +1527,20 @@ fn a_loop_that_doubles_back_in_a_tiny_zigzag_still_offsets_inward() {
     let fam = inward_family(&[sq], 1.0, 0.01, 100).unwrap();
     assert!(fam.len() > 5, "{}", fam.len());
 }
+
+#[test]
+fn the_default_post_is_the_machine_s_own_else_by_its_axes() {
+    let mut m = Machine::three_axis();
+    m.post.clear();
+    assert_eq!(Post::default_for(&m), "generic");
+    let mut rotary = Machine::four_axis_a();
+    rotary.post.clear();
+    assert_eq!(Post::default_for(&rotary), "fiveaxis");
+    rotary.post = "mach3".into();
+    assert_eq!(Post::default_for(&rotary), "mach3");
+    // Every built-in machine names a post that exists.
+    for e in crate::catalog::builtin() {
+        let id = Post::default_for(&e.machine);
+        assert!(Post::builtin(id).is_some(), "{}: {id}", e.id);
+    }
+}

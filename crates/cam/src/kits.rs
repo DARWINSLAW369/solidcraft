@@ -18,6 +18,9 @@ pub enum Material {
 }
 
 impl Material {
+    /// Every material, in the order a list offers them.
+    pub const ALL: &[Material] = &[Material::Aluminium, Material::Wood, Material::Plastic];
+
     pub fn parse(s: &str) -> Option<Material> {
         Some(match s.trim().to_ascii_lowercase().as_str() {
             "aluminium" | "aluminum" | "al" | "metal" | "brass" => Material::Aluminium,

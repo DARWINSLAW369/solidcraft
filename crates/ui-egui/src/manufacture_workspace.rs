@@ -78,7 +78,7 @@ pub fn start(app: &mut SolveApp, id: &str) -> bool {
         }
         "cam.machine.set" => {
             let Some(s) = setup else {
-                app.set_status("Create a setup first: its form lets you pick the machine too.".to_string(), false);
+                app.set_status(solidcraft_ui_text::tr("manufacture.need_setup_machine").to_string(), false);
                 crate::cam_editor::open_new_setup(app);
                 return true;
             };
@@ -97,7 +97,7 @@ pub fn start(app: &mut SolveApp, id: &str) -> bool {
     // An operation needs a setup to go into: with none yet, its form comes first.
     let makes_operation = id.strip_prefix("cam.operation.").is_some_and(|k| !matches!(k, "set" | "remove" | "list" | "kinds" | "move" | "duplicate"));
     if makes_operation && setup.is_none() {
-        app.set_status("Create a setup first, then pick the operation again.".to_string(), false);
+        app.set_status(solidcraft_ui_text::tr("manufacture.need_setup_operation").to_string(), false);
         crate::cam_editor::open_new_setup(app);
         return true;
     }
@@ -314,8 +314,8 @@ pub fn panel(app: &mut SolveApp, ui: &mut egui::Ui) {
                     for st in &m.setups {
                         ui.add_space(t.space_8);
                         ui.label(RichText::new(format!("{}  ·  {} ({} axes)", st.name, st.machine.name, st.machine.axis_count())).strong());
-                        if crate::ui_kit::button(ui, solidcraft_ui_text::tr_label("Edit setup and machine").to_string(), crate::ui_kit::Button::Normal)
-                            .on_hover_text(solidcraft_ui_text::tr_label("Open this setup's form: stock, origin, and the machine's numbers"))
+                        if crate::ui_kit::button(ui, solidcraft_ui_text::tr("manufacture.edit_setup").to_string(), crate::ui_kit::Button::Normal)
+                            .on_hover_text(solidcraft_ui_text::tr("manufacture.edit_setup_tip"))
                             .clicked()
                         {
                             edit_setup = Some(st.id);

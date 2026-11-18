@@ -16,6 +16,7 @@ use std::collections::{BTreeSet, HashMap};
 use egui::RichText;
 use serde_json::{Map, Value, json};
 use solidcraft_engine::cam;
+use solidcraft_ui_text::tr;
 
 use crate::SolveApp;
 use solidcraft_theme::Tokens;
@@ -98,11 +99,11 @@ fn run_choices(app: &SolveApp, command: &str) -> Vec<(&'static str, &'static str
     let machines = || solidcraft_engine::cmd::cam::known_machines(&app.session).into_iter().map(|e| e.id).collect::<Vec<String>>();
     match command {
         "cam.tool.kit" => vec![
-            ("kit", "Tool kit", cam::kits::KITS.iter().map(|k| k.to_string()).collect()),
-            ("material", "Material", vec!["aluminium".into(), "wood".into(), "plastic".into()]),
+            ("kit", tr("manufacture.field.tool_kit"), cam::kits::KITS.iter().map(|k| k.to_string()).collect()),
+            ("material", tr("manufacture.field.material"), cam::kits::Material::ALL.iter().map(|m| m.name().to_string()).collect()),
         ],
-        "cam.machine.set" => vec![("machine", "Machine", machines())],
-        "cam.post" => vec![("post", "Post processor", cam::post::Post::BUILTIN.iter().map(|p| p.to_string()).collect())],
+        "cam.machine.set" => vec![("machine", tr("manufacture.field.machine"), machines())],
+        "cam.post" => vec![("post", tr("manufacture.field.post"), cam::post::Post::BUILTIN.iter().map(|p| p.to_string()).collect())],
         _ => Vec::new(),
     }
 }
@@ -110,10 +111,10 @@ fn run_choices(app: &SolveApp, command: &str) -> Vec<(&'static str, &'static str
 /// The window title of a plain command's form.
 fn run_title(command: &str) -> &'static str {
     match command {
-        "cam.tool.kit" => "Add Tool Kit",
-        "cam.machine.set" => "Set Machine",
-        "cam.post" => "Post Program",
-        _ => "Run Command",
+        "cam.tool.kit" => tr("manufacture.form.tool_kit"),
+        "cam.machine.set" => tr("manufacture.form.set_machine"),
+        "cam.post" => tr("manufacture.form.post"),
+        _ => tr("manufacture.form.run"),
     }
 }
 
@@ -311,7 +312,7 @@ pub fn open_new_setup(app: &mut SolveApp) {
         name: format!("Setup {}", m.setups.len() + 1),
         bodies: Vec::new(),
         fixtures: Vec::new(),
-        wcs: cam::frame::Frame::IDENTITY,
+        wcs: Default::default(),
         stock: if before.is_some() { cam::setup::Stock::FromSetup { setup: 0 } } else { cam::setup::Stock::default() },
         machine: before.map_or_else(cam::machine::Machine::three_axis, |b| b.machine.clone()),
         operations: Vec::new(),
@@ -321,6 +322,9 @@ pub fn open_new_setup(app: &mut SolveApp) {
     if let Value::Object(o) = &mut v {
         o.remove("id");
         o.remove("operations");
+        // `cam.setup.create` puts the origin and axes on the design's own; once made, the form
+        // edits the setup and shows them.
+        o.remove("wcs");
     }
     app.cam_editor = Some(CamEditor::new(Target::NewSetup, v));
 }
@@ -330,30 +334,19 @@ pub fn open_run(app: &mut SolveApp, command: &'static str, params: Value) {
     app.cam_editor = Some(CamEditor::new(Target::Run(command), params));
 }
 
-/// The post a setup's program is written with when none is chosen: its machine's own, else
-/// the generic 3- or multi-axis one (as `cam.post` decides).
-fn default_post(st: &cam::setup::Setup) -> String {
-    if !st.machine.post.is_empty() {
-        st.machine.post.clone()
-    } else if st.machine.axis_count() > 3 {
-        "fiveaxis".into()
-    } else {
-        "generic".into()
-    }
-}
-
 /// Opens the Post form for `setup` (else the first setup): the post (the machine's own picked),
 /// the program name, line numbers and canned cycles. OK then asks where to save the file.
 pub fn open_post(app: &mut SolveApp, setup: Option<u64>) {
     let m = &app.session.doc.manufacture;
     let Some(st) = setup.and_then(|s| m.setup(s)).or_else(|| m.setups.first()) else {
-        app.set_status("Create a setup first: there is nothing to post.", true);
+        app.set_status(tr("manufacture.need_setup_post"), true);
         return;
     };
     let program = if st.program.is_empty() { st.name.clone() } else { st.program.clone() };
     let params = json!({
         "setup": st.id,
-        "post": default_post(st),
+        // The same post `cam.post` picks when none is given.
+        "post": cam::post::Post::default_for(&st.machine),
         "program": program,
         "line_numbers": 0,
         "canned_cycles": true,
@@ -470,8 +463,8 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         (Some(n), Target::Operation(_)) => n.to_string(),
         (Some(n), Target::NewOperation(_)) => format!("New operation: {n}"),
         (Some(n), Target::Setup(_)) => format!("Setup: {n}"),
-        (Some(n), Target::NewTool) => format!("New tool: {n}"),
-        (Some(n), Target::NewSetup) => format!("New setup: {n}"),
+        (Some(n), Target::NewTool) => solidcraft_ui_text::format("manufacture.form.new_tool", &[("name", n)]),
+        (Some(n), Target::NewSetup) => solidcraft_ui_text::format("manufacture.form.new_setup", &[("name", n)]),
         (_, Target::Run(command)) => run_title(command).to_string(),
         (None, _) => kind_label(ed.target.noun()),
     };

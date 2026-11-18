@@ -78,6 +78,19 @@ impl Default for Post {
 }
 
 impl Post {
+    /// The post a machine's programs are written with when none is chosen: the machine's own,
+    /// else the multi-axis post for more than three axes, else the generic one. `cam.post` and
+    /// the Post form both ask this, so they always pick the same post.
+    pub fn default_for(machine: &Machine) -> &str {
+        if !machine.post.is_empty() {
+            machine.post.as_str()
+        } else if machine.axis_count() > 3 {
+            "fiveaxis"
+        } else {
+            "generic"
+        }
+    }
+
     /// RS-274 as most controls read it (LinuxCNC, Mach, Fanuc-style): mm, absolute, canned
     /// cycles, tool changes.
     pub fn generic() -> Post {
