@@ -3767,19 +3767,30 @@ mod manufacture_tests {
             let spec = solidcraft_engine::find_command(id).unwrap();
             assert_eq!(crate::workspace::destination(spec).map(|(t, _)| t), Some("MANUFACTURE"), "{id}");
         }
-        // A tool button opens the command box filled in rather than running with nothing.
+        // The Setup panel's Add Tool opens its form; an operation with no setup yet opens the
+        // New Setup form first.
         h.app.start("cam.tool.add");
-        assert!(h.app.ui.palette_open);
-        assert!(h.app.sbox.text.starts_with("cam.tool.add {"));
-        h.app.ui.palette_open = false;
+        assert_eq!(h.app.cam_editor.as_ref().map(|e| e.target), Some(crate::cam_editor::Target::NewTool));
+        assert!(!h.app.ui.palette_open);
         h.app.start("cam.operation.slot");
-        assert!(h.app.sbox.text.starts_with("cam.operation.slot {") && h.app.sbox.text.contains("\"width\""), "{}", h.app.sbox.text);
-        h.app.start("cam.operation.tap");
-        assert!(h.app.sbox.text.contains("\"cycle\":\"tap\"") && h.app.sbox.text.contains("\"pitch\""), "{}", h.app.sbox.text);
-        h.app.ui.palette_open = false;
-        // A simulation shown by a script marks the workspace current; leaving ends it.
+        assert_eq!(h.app.cam_editor.as_ref().map(|e| e.target), Some(crate::cam_editor::Target::NewSetup));
+        assert!(!h.app.ui.palette_open);
+        h.app.cam_editor = None;
+        // With a setup, an operation button opens the new operation's form filled in rather than
+        // running with nothing.
         let tool = h.app.run("cam.tool.add", json!({"name": "6 mm flat", "kind": "flat", "diameter": 6})).unwrap()["id"].clone();
         let setup = h.app.run("cam.setup.create", json!({})).unwrap()["id"].clone();
+        let new_op = Some(crate::cam_editor::Target::NewOperation(setup.as_u64().unwrap()));
+        h.app.start("cam.operation.slot");
+        let ed = h.app.cam_editor.as_ref().unwrap();
+        assert_eq!(Some(ed.target), new_op);
+        assert!(ed.draft.to_string().contains("\"width\""), "{}", ed.draft);
+        h.app.start("cam.operation.tap");
+        let ed = h.app.cam_editor.as_ref().unwrap();
+        assert_eq!(Some(ed.target), new_op);
+        assert!(ed.draft.to_string().contains("\"cycle\":\"tap\"") && ed.draft.to_string().contains("\"pitch\""), "{}", ed.draft);
+        h.app.cam_editor = None;
+        // A simulation shown by a script marks the workspace current; leaving ends it.
         h.app.run("cam.operation.add", json!({"setup": setup, "tool": tool, "type": "face", "stepover": 4})).unwrap();
         h.app.run("cam.generate", json!({})).unwrap();
         h.app.run("cam.simulate.show", json!({"progress": 0.5})).unwrap();

@@ -1096,7 +1096,7 @@ fn run_form(
     if let Some(current) = p.get("setup").and_then(Value::as_u64) {
         let mut k = setups.iter().position(|x| x.0 == current).unwrap_or(0);
         let names: Vec<&str> = setups.iter().map(|x| x.1.as_str()).collect();
-        crate::ui_kit::row(ui, "Setup", |ui| crate::ui_kit::dropdown(ui, "cam_ed_run_setup", &mut k, &names));
+        crate::ui_kit::row(ui, tr("manufacture.field.setup"), |ui| crate::ui_kit::dropdown(ui, "cam_ed_run_setup", &mut k, &names));
         if let Some(x) = setups.get(k) {
             p.insert("setup".into(), json!(x.0));
         }
