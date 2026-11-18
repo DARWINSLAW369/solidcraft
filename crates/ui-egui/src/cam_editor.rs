@@ -101,6 +101,8 @@ pub struct CamEditor {
     pub place: Option<Value>,
     /// Placing a setup's origin: the choices in the form, and picking on the model.
     pub origin: OriginForm,
+    /// Folded down to its title and buttons, to see more of the model.
+    pub minimized: bool,
 }
 
 /// Placing a setup's origin: which point of the stock or model, which construction point, and
@@ -144,6 +146,7 @@ impl CamEditor {
             message: None,
             place: None,
             origin: OriginForm::default(),
+            minimized: false,
         }
     }
 
@@ -374,6 +377,20 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         .keep_open_on_escape()
         .actions("OK", "Cancel", Some("Apply"))
         .show(ctx, can, |ui| {
+            // Minimize folds the form down to this button and OK / Cancel, out of the way while
+            // zooming in on the model; Restore brings the fields back as they were.
+            let fold = if ed.minimized { "▼  Restore" } else { "▲  Minimize" };
+            let hint = if ed.minimized { "Show the form's fields again" } else { "Fold the form away to see more of the model" };
+            if crate::ui_kit::button(ui, solidcraft_ui_text::tr_label(fold), crate::ui_kit::Button::Normal)
+                .on_hover_text(solidcraft_ui_text::tr_label(hint))
+                .clicked()
+            {
+                ed.minimized = !ed.minimized;
+            }
+            if ed.minimized {
+                return;
+            }
+            ui.add_space(t.space_8);
             // Tabs.
             let mut tab = usize::from(ed.tab == Tab::Json);
             // Room for both labels side by side (narrower, the kit turns segments into a dropdown).
