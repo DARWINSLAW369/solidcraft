@@ -84,15 +84,15 @@
         "kinematics",
         "post"
       ],
-      "from": "PhysCAD's STARMACNC6060 machine (9000-24000 rev/min, 2.2 kW, 5080 mm/min feed and rapid, manual tool change) and the user's shop notes (Mach3, rotary along Y with chuck at -Y, A word)",
-      "checked": "2026-11-17"
+      "from": "The owner's own machine and the settings they run it with (custom water-cooled spindle, 9000-24000 rev/min, 2.2 kW; 5080 mm/min feed and rapid; manual tool change; Mach3; rotary along Y with the chuck at -Y, A word). The owner had typed the same numbers into another program by hand; nothing is taken from another program's machine definitions.",
+      "checked": "2026-11-18"
     },
     {
       "fields": [
         "work_area"
       ],
-      "from": "The user: 600 X x 600 Y x 200 Z",
-      "checked": "2026-11-17"
+      "from": "The owner's machine: 600 X x 600 Y x 200 Z",
+      "checked": "2026-11-18"
     }
   ],
   "notes": [
