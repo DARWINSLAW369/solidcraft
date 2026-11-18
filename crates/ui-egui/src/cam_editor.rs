@@ -365,7 +365,12 @@ pub fn open_post(app: &mut SolveApp, setup: Option<u64>) {
 fn post_to_file(app: &mut SolveApp, params: Value) {
     let post_id = params["post"].as_str().unwrap_or("generic").to_string();
     let ext = cam::post::Post::builtin(&post_id).map(|p| p.extension).unwrap_or_else(|| "nc".into());
-    let name: String = params["program"].as_str().unwrap_or("program").chars().filter(|c| !matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|')).collect();
+    let name: String = params["program"]
+        .as_str()
+        .unwrap_or("program")
+        .chars()
+        .filter(|c| !matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|'))
+        .collect();
     let name = if name.trim().is_empty() { "program".to_string() } else { name };
     let mut exts: Vec<&str> = vec!["tap", "nc", "gcode", "ngc", "cnc"];
     exts.retain(|e| *e != ext);
@@ -488,7 +493,9 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     };
     let tools: Vec<(u64, String)> = app.session.doc.manufacture.tools.tools.iter().map(|tl| (tl.id, format!("T{} {}", tl.number, tl.name))).collect();
     let machines: Vec<(String, cam::machine::Machine)> = match ed.target {
-        Target::Setup(_) | Target::NewSetup => solidcraft_engine::cmd::cam::known_machines(&app.session).into_iter().map(|e| (e.id, e.machine)).collect(),
+        Target::Setup(_) | Target::NewSetup => {
+            solidcraft_engine::cmd::cam::known_machines(&app.session).into_iter().map(|e| (e.id, e.machine)).collect()
+        }
         _ => Vec::new(),
     };
     // Points the designer placed (construction points), for the setup's origin.
@@ -1085,7 +1092,13 @@ fn setup_fields(
 
 /// A plain command's form: the setup it is for (when it takes one), then a dropdown for each
 /// parameter with choices, then any other parameter as its own field.
-fn run_form(ui: &mut egui::Ui, draft: &mut Value, inputs: &mut Inputs, setups: &[(u64, String)], choices: &[(&'static str, &'static str, Vec<String>)]) {
+fn run_form(
+    ui: &mut egui::Ui,
+    draft: &mut Value,
+    inputs: &mut Inputs,
+    setups: &[(u64, String)],
+    choices: &[(&'static str, &'static str, Vec<String>)],
+) {
     let Value::Object(p) = draft else { return };
     if let Some(current) = p.get("setup").and_then(Value::as_u64) {
         let mut k = setups.iter().position(|x| x.0 == current).unwrap_or(0);
