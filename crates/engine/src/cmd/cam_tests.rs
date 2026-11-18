@@ -1504,3 +1504,56 @@ fn workholding_finds_a_vise_grip_on_a_block_and_a_waist_for_tabs() {
     // No hole: no pin.
     assert_eq!(by("pin")["feasible"], false);
 }
+
+#[test]
+fn mach3_post_stops_the_spindle_before_each_manual_tool_change() {
+    let mut s = block();
+    let flat = add_flat(&mut s, 6.0);
+    let drill = run(
+        &mut s,
+        "cam.tool.add",
+        json!({"name": "5 mm drill", "kind": "drill", "diameter": 5, "flute_length": 30, "overall_length": 60, "feeds": {"plunge": 150, "coolant": "flood"}}),
+    )["id"]
+        .as_u64()
+        .unwrap();
+    let setup = run(
+        &mut s,
+        "cam.setup.create",
+        json!({"name": "Top", "machine": TEST_MILL.clone(), "stock": {"mode": "relative_box", "x_neg": 1, "x_pos": 1, "y_neg": 1, "y_pos": 1, "z_pos": 1}}),
+    )["id"]
+        .as_u64()
+        .unwrap();
+    run(
+        &mut s,
+        "cam.operation.add",
+        json!({"setup": setup, "type": "pocket2d", "tool": flat, "name": "Pocket", "stepover": 2, "stepdown": 2, "geometry": {"source": "faces", "points": [[28, 15, 6]]}}),
+    );
+    run(
+        &mut s,
+        "cam.operation.add",
+        json!({"setup": setup, "type": "drill", "tool": drill, "name": "Drill", "cycle": "peck", "peck": 2, "break_through": 1, "geometry": {"source": "holes", "points": [[13, 10, 5]]}}),
+    );
+    run(&mut s, "cam.generate", json!({"setup": setup}));
+    let post = run(&mut s, "cam.post", json!({"setup": setup, "post": "mach3"}));
+    assert_eq!(post["post"], "mach3");
+    let g = post["gcode"].as_str().unwrap();
+    let lines: Vec<&str> = g.lines().map(str::trim).collect();
+    assert!(lines.contains(&"G21 G90 G94 G17 G40 G49 G80"), "{g}");
+    // Two tools: the second change comes after the spindle and coolant are off and Z is parked,
+    // so hands near the tool at Mach3's M6 stop never meet a turning spindle.
+    let changes: Vec<usize> = lines.iter().enumerate().filter(|(_, l)| l.starts_with('T') && l.ends_with("M6")).map(|(i, _)| i).collect();
+    assert_eq!(changes.len(), 2, "{g}");
+    let before = &lines[changes[0] + 1..changes[1]];
+    let m5 = before.iter().rposition(|l| *l == "M5").expect("M5 before the second tool change");
+    let m9 = before.iter().rposition(|l| *l == "M9").expect("M9 before the second tool change");
+    let park = before.iter().rposition(|l| *l == "G53 G0 Z0").expect("park before the second tool change");
+    assert!(m5 < m9 && m9 < park, "{g}");
+    assert!(lines.iter().any(|l| l.starts_with("G43 H")), "{g}");
+    let g83 = lines.iter().position(|l| l.starts_with("G83")).expect("a G83 peck cycle");
+    assert!(lines[g83..].iter().any(|l| l.starts_with("G80")), "{g}");
+    assert!(lines.iter().rev().find(|l| !l.is_empty() && **l != "%").is_some_and(|l| *l == "M30"), "{g}");
+    assert_eq!(solidcraft_cam::post::Post::mach3().extension, "tap");
+    // Mach4 is not claimed: it was never run there.
+    let e = fails(&mut s, "cam.post", json!({"setup": setup, "post": "mach4"}));
+    assert!(e.contains("mach4"), "{e}");
+}

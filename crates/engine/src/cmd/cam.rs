@@ -310,7 +310,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .noundo(),
     CommandSpec::new("cam.post", "Post Process", post).at("MANUFACTURE", "TOOLPATHS")
         .icon("export")
-        .params("setup?: id (default the only setup); post?: generic | grbl | fiveaxis | makera (default the machine's own post, else by its axes); path?: write the G-code here (.nc); program?: name; line_numbers?: increment; canned_cycles?: bool: writes the setup's program through the machine's kinematics. Returns the G-code (when under 2 MB), line count and notice")
+        .params("setup?: id (default the only setup); post?: generic | grbl | fiveaxis | makera | mach3 (default the machine's own post, else by its axes); path?: write the G-code here (.nc); program?: name; line_numbers?: increment; canned_cycles?: bool: writes the setup's program through the machine's kinematics. Returns the G-code (when under 2 MB), line count and notice")
         .noundo(),
     CommandSpec::new("cam.simulate.show", "Show Simulation", simulate_show).at("MANUFACTURE", "TOOLPATHS")
         .icon("play")

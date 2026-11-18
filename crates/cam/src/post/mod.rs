@@ -184,15 +184,17 @@ impl Post {
         }
     }
 
-    /// Mach3 (and Mach4 in its Mach3-style mode): mm, absolute, `T M6` manual tool changes
-    /// (Mach3 stops and waits at M6), `G43 H` length offsets, canned drilling cycles
-    /// (G81/G82/G83/G73), `( )` comments, dwell P in seconds (Mach3's default), A word for a
-    /// 4th axis, `.tap` files.
+    /// Mach3: mm, absolute, `T M6` manual tool changes (Mach3 stops and waits at M6; before every
+    /// change after the first the program has already written `M5`, `M9` and the park), `G43 H`
+    /// length offsets, canned drilling cycles (G81/G82/G83/G73), `( )` comments, A word for a
+    /// 4th axis, `.tap` files. Dwell `P` is in seconds, Mach3's default; Mach3 has a setting
+    /// that reads it in milliseconds instead, which this post does not follow. Not tested on
+    /// Mach4.
     pub fn mach3() -> Post {
         Post {
             id: "mach3".into(),
             name: "Mach3 (3- or 4-axis, A rotary)".into(),
-            description: "Mach3 G-code: G21 G90 G94 G17 G40 G49 G80, T M6 manual tool changes, G43 H, canned drilling cycles (G83 peck), A word for the 4th axis, ( ) comments, M30, .tap".into(),
+            description: "Mach3 G-code: G21 G90 G94 G17 G40 G49 G80, T M6 manual tool changes (M5 M9 and the park before each change), G43 H, canned drilling cycles (G83 peck), A word for the 4th axis, ( ) comments, M30, .tap. Dwell P in seconds (Mach3's default; Mach3 can be set to milliseconds instead)".into(),
             header: vec!["G21 G90 G94 G17 G40 G49 G80".into(), "G54".into()],
             end: "M30".into(),
             max_axes: 4,
@@ -212,7 +214,7 @@ impl Post {
             "grbl" => Some(Post::grbl()),
             "fiveaxis" => Some(Post::fiveaxis()),
             "makera" | "carvera" => Some(Post::makera()),
-            "mach3" | "mach4" => Some(Post::mach3()),
+            "mach3" => Some(Post::mach3()),
             _ => None,
         }
     }
