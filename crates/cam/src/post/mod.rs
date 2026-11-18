@@ -184,17 +184,40 @@ impl Post {
         }
     }
 
+    /// Mach3 (and Mach4 in its Mach3-style mode): mm, absolute, `T M6` manual tool changes
+    /// (Mach3 stops and waits at M6), `G43 H` length offsets, canned drilling cycles
+    /// (G81/G82/G83/G73), `( )` comments, dwell P in seconds (Mach3's default), A word for a
+    /// 4th axis, `.tap` files.
+    pub fn mach3() -> Post {
+        Post {
+            id: "mach3".into(),
+            name: "Mach3 (3- or 4-axis, A rotary)".into(),
+            description: "Mach3 G-code: G21 G90 G94 G17 G40 G49 G80, T M6 manual tool changes, G43 H, canned drilling cycles (G83 peck), A word for the 4th axis, ( ) comments, M30, .tap".into(),
+            header: vec!["G21 G90 G94 G17 G40 G49 G80".into(), "G54".into()],
+            end: "M30".into(),
+            max_axes: 4,
+            tool_change: "T{n} M6".into(),
+            park: "G53 G0 Z0".into(),
+            percent_lines: true,
+            extension: "tap".into(),
+            laser_on: String::new(),
+            laser_off: String::new(),
+            ..Post::generic()
+        }
+    }
+
     pub fn builtin(id: &str) -> Option<Post> {
         match id {
             "generic" => Some(Post::generic()),
             "grbl" => Some(Post::grbl()),
             "fiveaxis" => Some(Post::fiveaxis()),
             "makera" | "carvera" => Some(Post::makera()),
+            "mach3" | "mach4" => Some(Post::mach3()),
             _ => None,
         }
     }
 
-    pub const BUILTIN: &'static [&'static str] = &["generic", "grbl", "fiveaxis", "makera"];
+    pub const BUILTIN: &'static [&'static str] = &["generic", "grbl", "fiveaxis", "makera", "mach3"];
 
     fn comment(&self, text: &str) -> String {
         let clean: String = text.chars().filter(|c| !matches!(c, '(' | ')' | ';' | '\n' | '\r')).collect();
