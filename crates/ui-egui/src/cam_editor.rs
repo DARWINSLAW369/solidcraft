@@ -873,11 +873,6 @@ fn tool_fields(ui: &mut egui::Ui, draft: &mut Value, inputs: &mut Inputs, uses: 
     if let Some(Value::String(name)) = tl.get_mut("name") {
         crate::ui_kit::row(ui, "Name", |ui| crate::ui_kit::text_field(ui, name, ""));
     }
-    for (key, label) in [("number", "Tool number (T)"), ("length_offset", "Length offset (H)")] {
-        if let Some(v) = tl.get_mut(key) {
-            value(ui, inputs, key, label, v, None);
-        }
-    }
     // The kind, then its own sizes.
     let kinds = cam::ops::variants::<cam::tool::ToolKind>(json!({"kind": "\u{1}"}));
     let current = tl.get("kind").and_then(Value::as_str).unwrap_or("").to_string();
@@ -901,40 +896,15 @@ fn tool_fields(ui: &mut egui::Ui, draft: &mut Value, inputs: &mut Inputs, uses: 
             value(ui, inputs, key, &label, v, None);
         }
     }
-    section(ui, "Size", true, |ui| {
-        for (key, label) in [
-            ("diameter", "Diameter (mm)"),
-            ("flute_length", "Flute length (mm)"),
-            ("shank_diameter", "Shank diameter (mm)"),
-            ("overall_length", "Stick-out (mm)"),
-            ("holder_diameter", "Holder diameter (mm)"),
-            ("flutes", "Flutes"),
-        ] {
-            if let Some(v) = tl.get_mut(key) {
-                value(ui, inputs, key, label, v, None);
-            }
+    // What the toolpaths need, in view: the size and the length that reaches. The rest (the T
+    // and H numbers, the holder, the flutes, speeds and feeds) is usually set at the machine or
+    // filled in by the tool kit and the planner, so it waits folded away.
+    for (key, label) in [("diameter", "Diameter (mm)"), ("flute_length", "Flute length (mm)"), ("overall_length", "Stick-out (mm)")] {
+        if let Some(v) = tl.get_mut(key) {
+            value(ui, inputs, key, label, v, None);
         }
-    });
-    if let Some(Value::Object(f)) = tl.get_mut("feeds") {
-        section(ui, "Feeds and speeds", true, |ui| {
-            let coolants = cam::ops::variants::<cam::tool::Coolant>(Value::Null);
-            let keys: Vec<String> = f.keys().cloned().collect();
-            for key in keys {
-                let path = format!("feeds.{key}");
-                let Some(v) = f.get_mut(&key) else { continue };
-                let label = match key.as_str() {
-                    "spindle_rpm" => "Spindle speed (rev/min)".to_string(),
-                    "clockwise" => "Clockwise (M3)".to_string(),
-                    "coolant" => "Coolant".to_string(),
-                    _ if v.is_number() => format!("{} feed (mm/min)", kind_label(&key)),
-                    _ => kind_label(&key),
-                };
-                let choices = (key == "coolant").then_some(coolants.as_slice());
-                value(ui, inputs, &path, &label, v, choices);
-            }
-        });
     }
-    // Anything newer than this form.
+    // The fields this form knows; anything newer goes under More.
     let known = [
         "name",
         "number",
@@ -949,16 +919,45 @@ fn tool_fields(ui: &mut egui::Ui, draft: &mut Value, inputs: &mut Inputs, uses: 
         "feeds",
     ];
     let rest: Vec<String> = tl.keys().filter(|k| !known.contains(&k.as_str()) && !TOOL_KIND_KEYS.contains(&k.as_str())).cloned().collect();
-    if !rest.is_empty() {
-        section(ui, "Other", false, |ui| {
-            for key in rest {
-                if let Some(v) = tl.get_mut(&key) {
-                    let label = label_of(&key, v);
-                    value(ui, inputs, &key, &label, v, None);
-                }
+    section(ui, "More", false, |ui| {
+        for (key, label) in [
+            ("number", "Tool number (T)"),
+            ("length_offset", "Length offset (H)"),
+            ("shank_diameter", "Shank diameter (mm)"),
+            ("holder_diameter", "Holder diameter (mm)"),
+            ("flutes", "Flutes"),
+        ] {
+            if let Some(v) = tl.get_mut(key) {
+                value(ui, inputs, key, label, v, None);
             }
-        });
-    }
+        }
+        if let Some(Value::Object(f)) = tl.get_mut("feeds") {
+            group(ui, "Feeds and speeds", |ui| {
+                let coolants = cam::ops::variants::<cam::tool::Coolant>(Value::Null);
+                let keys: Vec<String> = f.keys().cloned().collect();
+                for key in keys {
+                    let path = format!("feeds.{key}");
+                    let Some(v) = f.get_mut(&key) else { continue };
+                    let label = match key.as_str() {
+                        "spindle_rpm" => "Spindle speed (rev/min)".to_string(),
+                        "clockwise" => "Clockwise (M3)".to_string(),
+                        "coolant" => "Coolant".to_string(),
+                        _ if v.is_number() => format!("{} feed (mm/min)", kind_label(&key)),
+                        _ => kind_label(&key),
+                    };
+                    let choices = (key == "coolant").then_some(coolants.as_slice());
+                    value(ui, inputs, &path, &label, v, choices);
+                }
+            });
+        }
+        // Anything newer than this form.
+        for key in rest {
+            if let Some(v) = tl.get_mut(&key) {
+                let label = label_of(&key, v);
+                value(ui, inputs, &key, &label, v, None);
+            }
+        }
+    });
 }
 
 /// The Fields tab of a setup; returns an axis when a Turn Over button was pressed.

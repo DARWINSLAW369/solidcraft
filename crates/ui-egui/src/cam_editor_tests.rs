@@ -196,9 +196,17 @@ fn tools_open_in_the_same_editor_and_apply_through_tool_set() {
     h.frames(20);
     let ed = h.app.cam_editor.as_ref().unwrap();
     assert_eq!(ed.target, Target::Tool(id));
-    for w in ["Fields", "JSON", "Name", "Tool number (T)", "Kind", "Size", "Diameter (mm)", "Feeds and speeds", "Spindle speed (rev/min)", "Coolant"]
-    {
+    // The short form: what the toolpaths need. The rest waits under More.
+    for w in ["Fields", "JSON", "Name", "Kind", "Diameter (mm)", "Flute length (mm)", "Stick-out (mm)", "More"] {
         assert!(h.widget(w).is_some(), "{w} is drawn");
+    }
+    for w in ["Tool number (T)", "Holder diameter (mm)", "Spindle speed (rev/min)"] {
+        assert!(h.widget(w).is_none(), "{w} waits folded away");
+    }
+    h.step(&json!({"widget": "More"})).unwrap();
+    h.frames(20);
+    for w in ["Tool number (T)", "Length offset (H)", "Holder diameter (mm)", "Flutes", "Feeds and speeds", "Spindle speed (rev/min)", "Coolant"] {
+        assert!(h.widget(w).is_some(), "{w} is drawn under More");
     }
     assert!(h.widget("Used by 1 operation: a change makes their toolpaths stale.").is_some());
     let undo = h.app.session.undo.len();
