@@ -1520,6 +1520,6 @@ fn the_example_shop_library_adds_every_tool_with_its_number() {
     let list = run(&mut s, "cam.tool.list", json!({}));
     let numbers: std::collections::BTreeSet<u64> = list["tools"].as_array().unwrap().iter().map(|t| t["number"].as_u64().unwrap()).collect();
     assert_eq!(numbers.len(), 129, "two tools share a number");
-    // Only the owner's 10 shop tools carry speeds and feeds; the generic sizes preset nothing.
-    assert_eq!(tools.iter().filter(|t| t.get("feeds").is_some()).count(), 10);
+    // Size and shape only: no tool presets speeds or feeds.
+    assert_eq!(tools.iter().filter(|t| t.get("feeds").is_some()).count(), 0);
 }

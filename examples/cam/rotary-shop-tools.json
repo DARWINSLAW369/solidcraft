@@ -1,20 +1,9 @@
 {
   "name": "Rotary shop tools",
-  "source": "A placeholder library, to be edited per user: the owner's 10 shop tools with the speeds and feeds they run on their own machine, plus generic sizes with no speeds or feeds",
+  "source": "A placeholder library, to be edited per user: the owner's 10 shop tools and generic sizes, sizes and shapes only, with no speeds or feeds",
   "tools": [
     {
       "diameter": 50.0,
-      "feeds": {
-        "clockwise": true,
-        "coolant": "flood",
-        "cutting": 1000.0,
-        "lead_in": 1000.0,
-        "lead_out": 1000.0,
-        "plunge": 300.0,
-        "ramp": 600.0,
-        "retract": 0.0,
-        "spindle_rpm": 16000.0
-      },
       "flute_length": 5.0,
       "flutes": 4,
       "holder_diameter": 0.0,
@@ -52,17 +41,6 @@
     },
     {
       "diameter": 6.35,
-      "feeds": {
-        "clockwise": true,
-        "coolant": "flood",
-        "cutting": 1000.0,
-        "lead_in": 1000.0,
-        "lead_out": 1000.0,
-        "plunge": 300.0,
-        "ramp": 600.0,
-        "retract": 0.0,
-        "spindle_rpm": 16000.0
-      },
       "flute_length": 19.0,
       "flutes": 3,
       "holder_diameter": 0.0,
@@ -75,17 +53,6 @@
     },
     {
       "diameter": 3.175,
-      "feeds": {
-        "clockwise": true,
-        "coolant": "flood",
-        "cutting": 1000.0,
-        "lead_in": 1000.0,
-        "lead_out": 1000.0,
-        "plunge": 300.0,
-        "ramp": 600.0,
-        "retract": 0.0,
-        "spindle_rpm": 16000.0
-      },
       "flute_length": 12.0,
       "flutes": 2,
       "holder_diameter": 0.0,
@@ -98,17 +65,6 @@
     },
     {
       "diameter": 6.35,
-      "feeds": {
-        "clockwise": true,
-        "coolant": "flood",
-        "cutting": 1000.0,
-        "lead_in": 1000.0,
-        "lead_out": 1000.0,
-        "plunge": 300.0,
-        "ramp": 600.0,
-        "retract": 0.0,
-        "spindle_rpm": 16000.0
-      },
       "flute_length": 13.0,
       "flutes": 2,
       "holder_diameter": 0.0,
@@ -121,17 +77,6 @@
     },
     {
       "diameter": 3.175,
-      "feeds": {
-        "clockwise": true,
-        "coolant": "flood",
-        "cutting": 1000.0,
-        "lead_in": 1000.0,
-        "lead_out": 1000.0,
-        "plunge": 300.0,
-        "ramp": 600.0,
-        "retract": 0.0,
-        "spindle_rpm": 16000.0
-      },
       "flute_length": 8.0,
       "flutes": 2,
       "holder_diameter": 0.0,
@@ -317,17 +262,6 @@
     },
     {
       "diameter": 4.0,
-      "feeds": {
-        "clockwise": true,
-        "coolant": "flood",
-        "cutting": 1000.0,
-        "lead_in": 1000.0,
-        "lead_out": 1000.0,
-        "plunge": 300.0,
-        "ramp": 600.0,
-        "retract": 0.0,
-        "spindle_rpm": 9000.0
-      },
       "flute_length": 24.0,
       "flutes": 2,
       "holder_diameter": 0.0,
@@ -366,17 +300,6 @@
     },
     {
       "diameter": 5.0,
-      "feeds": {
-        "clockwise": true,
-        "coolant": "flood",
-        "cutting": 1000.0,
-        "lead_in": 1000.0,
-        "lead_out": 1000.0,
-        "plunge": 300.0,
-        "ramp": 600.0,
-        "retract": 0.0,
-        "spindle_rpm": 9000.0
-      },
       "flute_length": 28.0,
       "flutes": 2,
       "holder_diameter": 0.0,
@@ -390,17 +313,6 @@
     },
     {
       "diameter": 6.0,
-      "feeds": {
-        "clockwise": true,
-        "coolant": "flood",
-        "cutting": 1000.0,
-        "lead_in": 1000.0,
-        "lead_out": 1000.0,
-        "plunge": 300.0,
-        "ramp": 600.0,
-        "retract": 0.0,
-        "spindle_rpm": 9000.0
-      },
       "flute_length": 28.0,
       "flutes": 2,
       "holder_diameter": 0.0,
@@ -414,17 +326,6 @@
     },
     {
       "diameter": 7.0,
-      "feeds": {
-        "clockwise": true,
-        "coolant": "flood",
-        "cutting": 1000.0,
-        "lead_in": 1000.0,
-        "lead_out": 1000.0,
-        "plunge": 300.0,
-        "ramp": 600.0,
-        "retract": 0.0,
-        "spindle_rpm": 9000.0
-      },
       "flute_length": 34.0,
       "flutes": 2,
       "holder_diameter": 0.0,
@@ -438,17 +339,6 @@
     },
     {
       "diameter": 8.0,
-      "feeds": {
-        "clockwise": true,
-        "coolant": "flood",
-        "cutting": 1000.0,
-        "lead_in": 1000.0,
-        "lead_out": 1000.0,
-        "plunge": 300.0,
-        "ramp": 600.0,
-        "retract": 0.0,
-        "spindle_rpm": 9000.0
-      },
       "flute_length": 34.0,
       "flutes": 2,
       "holder_diameter": 0.0,
