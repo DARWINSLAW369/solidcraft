@@ -361,9 +361,13 @@ end and returns its result.
 ## Post processors
 
 `makera` (Makera Carvera, Carvera Air and Z1, see above), `generic` (RS-274 for most 3-axis controls: tool changes, length offsets, canned drilling
-cycles), `grbl` (routers: no tool changer or canned cycles) and `fiveaxis` (A/B/C words through
+cycles), `grbl` (routers: no tool changer or canned cycles), `fiveaxis` (A/B/C words through
 the machine's kinematics; `G43.4` TCP when the machine has it, else machine coordinates with the
-moves linearised to the machine's tolerance). `cam.post.list` lists them.
+moves linearised to the machine's tolerance) and `mach3` (Mach3: `G21 G90 G94 G17 G40 G49 G80`,
+`T M6` manual tool changes with `M5`, `M9` and `G53 G0 Z0` before each change after the first,
+`G43 H`, canned cycles, the A word for a 4th axis, `.tap` files; dwell `P` in seconds, Mach3's
+default, so a Mach3 set to read it in milliseconds needs that setting changed back). `cam.post.list`
+lists them.
 
 ## Notice codes
 

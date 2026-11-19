@@ -184,17 +184,42 @@ impl Post {
         }
     }
 
+    /// Mach3: mm, absolute, `T M6` manual tool changes (Mach3 stops and waits at M6; before every
+    /// change after the first the program has already written `M5`, `M9` and the park), `G43 H`
+    /// length offsets, canned drilling cycles (G81/G82/G83/G73), `( )` comments, A word for a
+    /// 4th axis, `.tap` files. Dwell `P` is in seconds, Mach3's default; Mach3 has a setting
+    /// that reads it in milliseconds instead, which this post does not follow. Not tested on
+    /// Mach4.
+    pub fn mach3() -> Post {
+        Post {
+            id: "mach3".into(),
+            name: "Mach3 (3- or 4-axis, A rotary)".into(),
+            description: "Mach3 G-code: G21 G90 G94 G17 G40 G49 G80, T M6 manual tool changes (M5 M9 and the park before each change), G43 H, canned drilling cycles (G83 peck), A word for the 4th axis, ( ) comments, M30, .tap. Dwell P in seconds (Mach3's default; Mach3 can be set to milliseconds instead)".into(),
+            header: vec!["G21 G90 G94 G17 G40 G49 G80".into(), "G54".into()],
+            end: "M30".into(),
+            max_axes: 4,
+            tool_change: "T{n} M6".into(),
+            park: "G53 G0 Z0".into(),
+            percent_lines: true,
+            extension: "tap".into(),
+            laser_on: String::new(),
+            laser_off: String::new(),
+            ..Post::generic()
+        }
+    }
+
     pub fn builtin(id: &str) -> Option<Post> {
         match id {
             "generic" => Some(Post::generic()),
             "grbl" => Some(Post::grbl()),
             "fiveaxis" => Some(Post::fiveaxis()),
             "makera" | "carvera" => Some(Post::makera()),
+            "mach3" => Some(Post::mach3()),
             _ => None,
         }
     }
 
-    pub const BUILTIN: &'static [&'static str] = &["generic", "grbl", "fiveaxis", "makera"];
+    pub const BUILTIN: &'static [&'static str] = &["generic", "grbl", "fiveaxis", "makera", "mach3"];
 
     fn comment(&self, text: &str) -> String {
         let clean: String = text.chars().filter(|c| !matches!(c, '(' | ')' | ';' | '\n' | '\r')).collect();
