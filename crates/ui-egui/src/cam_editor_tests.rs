@@ -174,7 +174,7 @@ fn picked_points_are_rows_to_edit_add_and_remove() {
     h.frames(20);
     h.step(&json!({"widget": "Geometry"})).unwrap();
     h.frames(20);
-    assert!(h.widget("Points (2)").is_some(), "the points are a list");
+    assert!(h.widget("Points").is_some(), "the points are a list");
     assert!(h.widget("10, 10, 15").is_some(), "each point is a field");
     h.step(&json!({"widget": "Add"})).unwrap();
     h.frames(2);

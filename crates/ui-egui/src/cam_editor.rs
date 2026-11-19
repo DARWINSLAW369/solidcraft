@@ -597,13 +597,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 }
                 Tab::Json => {
                     egui::ScrollArea::vertical().max_height(tall).auto_shrink([false, true]).show(ui, |ui| {
-                        let r = ui.add(
-                            egui::TextEdit::multiline(&mut ed.text)
-                                .id(egui::Id::unique("sc_cam_editor_json"))
-                                .code_editor()
-                                .desired_rows(24)
-                                .desired_width(f32::INFINITY),
-                        );
+                        let r = crate::ui_kit::text_area(ui, "JSON", egui::Id::unique("sc_cam_editor_json"), &mut ed.text, 16, JSON_LIMIT);
                         if r.changed() {
                             ed.text_error = serde_json::from_str::<Value>(&ed.text).err().map(|e| e.to_string());
                         }
@@ -1145,16 +1139,12 @@ fn tool_kind_default(kind: &str, diameter: f64) -> Value {
 
 /// A collapsible section of the form.
 fn section(ui: &mut egui::Ui, title: &str, open: bool, add: impl FnOnce(&mut egui::Ui)) {
-    let t = Tokens::get();
-    egui::CollapsingHeader::new(RichText::new(solidcraft_ui_text::tr_label(title)).strong().color(t.text))
-        .id_salt(("cam_ed_section", title))
-        .default_open(open)
-        .show(ui, add);
+    crate::ui_kit::editor_section(ui, ("cam_ed_section", title), title, open, add);
 }
 
 /// A nested group (a lead, the ramp) inside a section.
 fn group(ui: &mut egui::Ui, title: &str, add: impl FnOnce(&mut egui::Ui)) {
-    egui::CollapsingHeader::new(solidcraft_ui_text::tr_label(title)).id_salt(("cam_ed_group", title)).default_open(true).show(ui, add);
+    crate::ui_kit::section(ui, ("cam_ed_group", title), title, true, add);
 }
 
 /// One parameter: a checkbox, a number, a choice, a text, a point, or a group of them.
@@ -1215,6 +1205,8 @@ fn value(ui: &mut egui::Ui, inputs: &mut Inputs, path: &str, label: &str, v: &mu
 
 /// The most rows a list shows; the rest are in the JSON tab.
 const LIST_ROWS: usize = 500;
+/// The JSON tab's limit: room for a draft with many geometry points.
+const JSON_LIMIT: usize = 4 << 20;
 
 /// A list (picked points, a loop's points, the loops): a row per item with a remove button,
 /// and Add, which repeats the last item (or starts a point) for editing.
@@ -1222,8 +1214,7 @@ fn list(ui: &mut egui::Ui, inputs: &mut Inputs, path: &str, label: &str, a: &mut
     let t = Tokens::get();
     let mut remove = None;
     let mut add = false;
-    let title = format!("{label} ({})", a.len());
-    egui::CollapsingHeader::new(title).id_salt(("cam_ed_list", path)).default_open(a.len() <= 12).show(ui, |ui| {
+    crate::ui_kit::section_count(ui, ("cam_ed_list", path), label, a.len() <= 12, Some(a.len()), |ui| {
         for (i, x) in a.iter_mut().enumerate().take(LIST_ROWS) {
             let p = format!("{path}.{i}");
             let what = match x {

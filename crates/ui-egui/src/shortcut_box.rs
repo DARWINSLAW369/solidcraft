@@ -223,7 +223,10 @@ pub fn search(app: &SolveApp, q: &str) -> Vec<Row> {
             let recent = app.sbox.recent.iter().position(|r| r == c.id).map_or(0, |i| 2000u32.saturating_sub(i.min(2000) as u32));
             // Commands that can run now come before those that can't.
             let usable = if info.enabled { 150 } else { 0 };
-            (s > 0).then_some((s + usable + if q.is_empty() { recent } else { recent / 20 }, (c.id, label, info.icon, place)))
+            // Of two close matches, the one from the workspace the user is in comes first: in
+            // Model, "circular" is the pattern; in Manufacture, the circular toolpath.
+            let here = if (home_tab == crate::manufacture_workspace::TAB) == crate::manufacture_workspace::active(app) { 50 } else { 0 };
+            (s > 0).then_some((s + usable + here + if q.is_empty() { recent } else { recent / 20 }, (c.id, label, info.icon, place)))
         })
         .collect();
     v.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.1.cmp(b.1.1)));
@@ -886,6 +889,11 @@ mod tests {
         let mut other = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
         other.sbox.load(&app.sbox.prefs());
         assert_eq!((other.sbox.pinned.clone(), other.sbox.recent.len()), (vec!["solid.extrude".to_string()], 2));
+        // Of two close matches, the current workspace's comes first.
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+        assert_eq!(search(&app, "circular").first().map(|x| x.0), Some("solid.pattern.circular"));
+        app.ui.tab = crate::manufacture_workspace::TAB.into();
+        assert_eq!(search(&app, "circular").first().map(|x| x.0), Some("cam.operation.circular"));
     }
 
     #[test]

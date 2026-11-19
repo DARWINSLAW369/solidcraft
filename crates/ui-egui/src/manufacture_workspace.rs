@@ -376,7 +376,7 @@ pub fn panel(app: &mut SolveApp, ui: &mut egui::Ui) {
                         ui.add_space(t.space_8);
                         ui.label(RichText::new(solidcraft_ui_text::tr_label("No tools or setups yet.")).color(t.text_dim));
                         ui.small(solidcraft_ui_text::tr_label(
-                            "Add a tool and create a setup, add operations, then generate, simulate and post. Every button opens its command filled in; the command box, scripts and the agent run the same cam.* commands.",
+                            "Add a tool and create a setup, add operations, then generate, simulate and post. Each button opens a form; the command box, scripts and the agent run the same cam.* commands.",
                         ));
                         return;
                     }

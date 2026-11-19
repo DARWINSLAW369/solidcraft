@@ -1099,7 +1099,7 @@
   "cmd.cam_operation_drill": "穴あけ",
   "cmd.cam_operation_duplicate": "加工を複製",
   "cmd.cam_operation_engrave": "彫刻",
-  "cmd.cam_operation_face": "面取り加工",
+  "cmd.cam_operation_face": "正面フライス加工",
   "cmd.cam_operation_flow": "フロー",
   "cmd.cam_operation_geodesic": "測地線",
   "cmd.cam_operation_horizontal": "水平面",
