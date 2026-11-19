@@ -1,0 +1,103 @@
+{
+  "format": "solidcraft-machine/1",
+  "id": "starmacnc6060",
+  "aliases": [
+    "starmacnc_6060",
+    "starmac6060",
+    "6060"
+  ],
+  "summary": "STARMACNC 6060 router on Mach3: 600 x 600 x 200 mm, spindle 9000-24000 rev/min, manual tool changes, Mach3 post.",
+  "machine": {
+    "name": "STARMACNC 6060 (Mach3)",
+    "vendor": "STARMACNC",
+    "model": "6060",
+    "post": "mach3",
+    "kinematics": {
+      "kind": "three_axis"
+    },
+    "rapid_feed": 5080.0,
+    "rotary_rapid_deg_min": 3600.0,
+    "travel_min": null,
+    "travel_max": null,
+    "work_area": [
+      600.0,
+      600.0,
+      200.0
+    ],
+    "gantry_clearance": 0.0,
+    "spindle_rpm_min": 9000.0,
+    "spindle_rpm_max": 24000.0,
+    "spindle_power_w": 2200.0,
+    "max_feed": 5080.0,
+    "tool_changer": {
+      "kind": "manual"
+    },
+    "collets": [],
+    "rotary_capacity": null,
+    "laser": null,
+    "tcp": false,
+    "linearisation_tolerance": 0.01,
+    "max_rotary_step_deg": 5.0
+  },
+  "options": [
+    {
+      "id": "starmacnc6060_rotary",
+      "aliases": [
+        "starmacnc_6060_rotary",
+        "6060_rotary",
+        "starmacnc6060_4axis"
+      ],
+      "summary": "With the 4-jaw rotary along Y (chuck at the front, -Y; live center at the back), written as A. Rotary Z0 is on the A centerline.",
+      "machine": {
+        "name": "STARMACNC 6060 + rotary along Y (A)",
+        "kinematics": {
+          "kind": "four_axis",
+          "rotary": {
+            "name": "A",
+            "direction": [
+              0.0,
+              1.0,
+              0.0
+            ],
+            "pivot": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "min_deg": -99999.0,
+            "max_deg": 99999.0,
+            "on_table": true
+          }
+        }
+      }
+    }
+  ],
+  "sources": [
+    {
+      "fields": [
+        "spindle_rpm_min",
+        "spindle_rpm_max",
+        "tool_changer",
+        "spindle_power_w",
+        "max_feed",
+        "rapid_feed",
+        "kinematics",
+        "post"
+      ],
+      "from": "The owner's own machine and the settings they run it with (custom water-cooled spindle, 9000-24000 rev/min, 2.2 kW; 5080 mm/min feed and rapid; manual tool change; Mach3; rotary along Y with the chuck at -Y, A word). The owner had typed the same numbers into another program by hand; nothing is taken from another program's machine definitions.",
+      "checked": "2026-11-18"
+    },
+    {
+      "fields": [
+        "work_area"
+      ],
+      "from": "The owner's machine: 600 X x 600 Y x 200 Z",
+      "checked": "2026-11-18"
+    }
+  ],
+  "notes": [
+    "Z0 is the top of the stock for flat work and the A centerline for rotary work.",
+    "A+ is meant to be clockwise looking from the chuck toward the live center (right-hand rule about +Y). Check the A sign on the first air cut.",
+    "Feeds are tuned in Mach3."
+  ]
+}

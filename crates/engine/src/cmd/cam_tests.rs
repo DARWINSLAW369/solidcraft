@@ -292,6 +292,41 @@ fn a_rotary_along_y_takes_its_axis_from_the_machine_through_the_setup_origin() {
 }
 
 #[test]
+fn the_starmacnc_6060_rotary_turns_a_shaft_along_y() {
+    let mut s = Session::default();
+    // A shaft along Y with a flat on it, on the built-in 6060 with its rotary option.
+    run(&mut s, "solid.cylinder", json!({"diameter": 20, "height": 60, "base": [0, -30, 0], "axis": "Y", "body_name": "Shaft"}));
+    run(&mut s, "solid.box", json!({"length": 30, "width": 20, "height": 5, "corner": [-15, -10, 7], "operation": "cut", "targets": ["Shaft"]}));
+    let ball = run(&mut s, "cam.tool.add", json!({"name": "4 mm ball", "kind": "ball", "diameter": 4}))["id"].as_u64().unwrap();
+    let setup = run(
+        &mut s,
+        "cam.setup.create",
+        json!({"name": "Rotary", "machine": "starmacnc6060_rotary", "stock": {"mode": "relative_cylinder", "axis": "y", "radial": 1, "start": 0, "end": 0}}),
+    );
+    assert_eq!(setup["machine"]["axes"], 4, "{setup}");
+    let setup = setup["id"].as_u64().unwrap();
+    // No orientation set: the operation turns about the machine's A axis, along Y.
+    let op = run(
+        &mut s,
+        "cam.operation.add",
+        json!({"setup": setup, "type": "rotary", "tool": ball, "along_axis": true, "stepover": 15, "tolerance": 0.05}),
+    );
+    let g = run(&mut s, "cam.generate", json!({"setup": setup}));
+    assert_eq!(g["setups"][0]["operations"][0]["status"], "ok", "{g} {op}");
+    // The machine names the mach3 post, which comes in its own pull request; the 4-axis
+    // generic post checks the motion here.
+    let post = run(&mut s, "cam.post", json!({"setup": setup, "post": "fiveaxis"}));
+    let code = post["gcode"].as_str().unwrap();
+    assert!(code.lines().any(|l| l.split_whitespace().any(|w| w.starts_with('A'))), "{}", &code[..code.len().min(800)]);
+    // X stays at 0 on every cut: the part turns under the tool instead.
+    for l in code.lines().filter(|l| l.starts_with("G1") || l.starts_with("G0") || l.starts_with('X')) {
+        if let Some(x) = l.split_whitespace().find(|w| w.starts_with('X')) {
+            assert!(x[1..].parse::<f64>().unwrap().abs() < 1e-3, "{l}");
+        }
+    }
+}
+
+#[test]
 fn swarf_and_indexed_orientation() {
     let mut s = block();
     let flat = add_flat(&mut s, 6.0);
