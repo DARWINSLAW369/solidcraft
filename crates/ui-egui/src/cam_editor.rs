@@ -16,6 +16,7 @@ use std::collections::{BTreeSet, HashMap};
 use egui::RichText;
 use serde_json::{Map, Value, json};
 use solidcraft_engine::cam;
+use solidcraft_ui_text::tr;
 
 use crate::SolveApp;
 use solidcraft_theme::Tokens;
@@ -53,25 +54,67 @@ pub enum Target {
     NewOperation(u64),
     Tool(u64),
     Setup(u64),
+    /// A tool not added yet: OK and Apply add it (`cam.tool.add`).
+    NewTool,
+    /// A setup not created yet: OK and Apply create it (`cam.setup.create`).
+    NewSetup,
+    /// A command run with the form's parameters (Tool Kit, Set Machine): the draft is its
+    /// parameters, each a choice from a list.
+    Run(&'static str),
 }
 
 impl Target {
-    /// The command that sets it, and the parameter naming it.
+    /// The command that sets it, and the parameter naming it (none for a new item or a plain
+    /// command run).
     fn command(self) -> (&'static str, &'static str, u64) {
         match self {
             Target::Operation(id) => ("cam.operation.set", "operation", id),
             Target::NewOperation(setup) => ("cam.operation.add", "setup", setup),
             Target::Tool(id) => ("cam.tool.set", "tool", id),
             Target::Setup(id) => ("cam.setup.set", "setup", id),
+            Target::NewTool => ("cam.tool.add", "", 0),
+            Target::NewSetup => ("cam.setup.create", "", 0),
+            Target::Run(command) => (command, "", 0),
         }
     }
 
     fn noun(self) -> &'static str {
         match self {
             Target::Operation(_) | Target::NewOperation(_) => "operation",
-            Target::Tool(_) => "tool",
-            Target::Setup(_) => "setup",
+            Target::Tool(_) | Target::NewTool => "tool",
+            Target::Setup(_) | Target::NewSetup => "setup",
+            Target::Run(_) => "command",
         }
+    }
+
+    /// Not saved in the design: the editor's own draft is all there is.
+    fn unsaved(self) -> bool {
+        matches!(self, Target::NewOperation(_) | Target::NewTool | Target::NewSetup | Target::Run(_))
+    }
+}
+
+/// The choices a plain command's form offers for each of its parameters (`setup` is a dropdown
+/// of the setups, drawn apart): the parameter, its label and the values to pick from.
+fn run_choices(app: &SolveApp, command: &str) -> Vec<(&'static str, &'static str, Vec<String>)> {
+    let machines = || solidcraft_engine::cmd::cam::known_machines(&app.session).into_iter().map(|e| e.id).collect::<Vec<String>>();
+    match command {
+        "cam.tool.kit" => vec![
+            ("kit", tr("manufacture.field.tool_kit"), cam::kits::KITS.iter().map(|k| k.to_string()).collect()),
+            ("material", tr("manufacture.field.material"), cam::kits::Material::ALL.iter().map(|m| m.name().to_string()).collect()),
+        ],
+        "cam.machine.set" => vec![("machine", tr("manufacture.field.machine"), machines())],
+        "cam.post" => vec![("post", tr("manufacture.field.post"), cam::post::Post::BUILTIN.iter().map(|p| p.to_string()).collect())],
+        _ => Vec::new(),
+    }
+}
+
+/// The window title of a plain command's form.
+fn run_title(command: &str) -> &'static str {
+    match command {
+        "cam.tool.kit" => tr("manufacture.form.tool_kit"),
+        "cam.machine.set" => tr("manufacture.form.set_machine"),
+        "cam.post" => tr("manufacture.form.post"),
+        _ => tr("manufacture.form.run"),
     }
 }
 
@@ -202,7 +245,7 @@ fn saved(app: &SolveApp, target: Target) -> Option<Value> {
         Target::Operation(op) => serde_json::to_value(m.operation(op)?.1).ok()?,
         Target::Tool(tool) => serde_json::to_value(m.tools.get(tool)?).ok()?,
         Target::Setup(setup) => serde_json::to_value(m.setup(setup)?).ok()?,
-        Target::NewOperation(_) => return None,
+        Target::NewOperation(_) | Target::NewTool | Target::NewSetup | Target::Run(_) => return None,
     };
     if let Value::Object(m) = &mut v {
         m.remove("id");
@@ -245,6 +288,89 @@ pub fn open_new(app: &mut SolveApp, setup: u64, kind: &str, call: &Value) -> boo
     true
 }
 
+/// Opens the editor on a new tool: a 6 mm flat end mill numbered after the library's highest,
+/// every field in the form before it is added.
+pub fn open_new_tool(app: &mut SolveApp) {
+    let number = app.session.doc.manufacture.tools.tools.iter().map(|t| t.number).max().unwrap_or(0) + 1;
+    let mut tool = cam::tool::Tool::new(0, "6 mm flat", cam::tool::ToolKind::FlatEnd, 6.0);
+    tool.number = number.min(9999);
+    let Ok(mut v) = serde_json::to_value(&tool) else { return };
+    if let Value::Object(m) = &mut v {
+        m.remove("id");
+    }
+    app.cam_editor = Some(CamEditor::new(Target::NewTool, v));
+}
+
+/// Opens the editor on a new setup, as `cam.setup.create` would make it with no parameters: the
+/// first measured from the design's origin with a box of stock round the model, a later one
+/// carrying the setup before's stock and machine over.
+pub fn open_new_setup(app: &mut SolveApp) {
+    let m = &app.session.doc.manufacture;
+    let before = m.setups.last();
+    let setup = cam::setup::Setup {
+        id: 0,
+        name: format!("Setup {}", m.setups.len() + 1),
+        bodies: Vec::new(),
+        fixtures: Vec::new(),
+        wcs: Default::default(),
+        stock: if before.is_some() { cam::setup::Stock::FromSetup { setup: 0 } } else { cam::setup::Stock::default() },
+        machine: before.map_or_else(cam::machine::Machine::three_axis, |b| b.machine.clone()),
+        operations: Vec::new(),
+        program: String::new(),
+    };
+    let Ok(mut v) = serde_json::to_value(&setup) else { return };
+    if let Value::Object(o) = &mut v {
+        o.remove("id");
+        o.remove("operations");
+        // `cam.setup.create` puts the origin and axes on the design's own; once made, the form
+        // edits the setup and shows them.
+        o.remove("wcs");
+    }
+    app.cam_editor = Some(CamEditor::new(Target::NewSetup, v));
+}
+
+/// Opens a plain command's form (Tool Kit, Set Machine) with these starting parameters.
+pub fn open_run(app: &mut SolveApp, command: &'static str, params: Value) {
+    app.cam_editor = Some(CamEditor::new(Target::Run(command), params));
+}
+
+/// Opens the Post form for `setup` (else the first setup): the post (the machine's own picked),
+/// the program name, line numbers and canned cycles. OK then asks where to save the file.
+pub fn open_post(app: &mut SolveApp, setup: Option<u64>) {
+    let m = &app.session.doc.manufacture;
+    let Some(st) = setup.and_then(|s| m.setup(s)).or_else(|| m.setups.first()) else {
+        app.set_status(tr("manufacture.need_setup_post"), true);
+        return;
+    };
+    let program = if st.program.is_empty() { st.name.clone() } else { st.program.clone() };
+    let params = json!({
+        "setup": st.id,
+        // The same post `cam.post` picks when none is given.
+        "post": cam::post::Post::default_for(&st.machine),
+        "program": program,
+        "line_numbers": 0,
+        "canned_cycles": true,
+    });
+    app.cam_editor = Some(CamEditor::new(Target::Run("cam.post"), params));
+}
+
+/// Post form OK: asks where to save, with the post's own extension (Mach3: .tap), then posts.
+fn post_to_file(app: &mut SolveApp, params: Value) {
+    let post_id = params["post"].as_str().unwrap_or("generic").to_string();
+    let ext = cam::post::Post::builtin(&post_id).map(|p| p.extension).unwrap_or_else(|| "nc".into());
+    let name: String = params["program"]
+        .as_str()
+        .unwrap_or("program")
+        .chars()
+        .filter(|c| !matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|'))
+        .collect();
+    let name = if name.trim().is_empty() { "program".to_string() } else { name };
+    let mut exts: Vec<&str> = vec!["tap", "nc", "gcode", "ngc", "cnc"];
+    exts.retain(|e| *e != ext);
+    exts.insert(0, ext.as_str());
+    app.pick_save_command(&format!("{name}.{ext}"), &exts, "cam.post", params);
+}
+
 /// Runs the set command with the draft; true when it was taken.
 pub fn apply(app: &mut SolveApp, ed: &mut CamEditor) -> bool {
     if ed.tab == Tab::Json {
@@ -266,7 +392,9 @@ pub fn apply(app: &mut SolveApp, ed: &mut CamEditor) -> bool {
         return false;
     }
     let (command, key, id) = ed.target.command();
-    params[key] = json!(id);
+    if !key.is_empty() {
+        params[key] = json!(id);
+    }
     if let Some(Value::Object(extra)) = ed.place.take() {
         for (k, v) in extra {
             params[k.as_str()] = v;
@@ -275,14 +403,26 @@ pub fn apply(app: &mut SolveApp, ed: &mut CamEditor) -> bool {
     if let Value::Object(m) = &mut params {
         m.remove("id");
     }
+    // Post: the file comes next (the save window), and the post runs once it is chosen.
+    if command == "cam.post" {
+        post_to_file(app, params);
+        return true;
+    }
     match app.run(command, params) {
         Ok(v) => {
-            // Added: from now on the editor edits the operation it made.
-            if let (Target::NewOperation(_), Some(id)) = (ed.target, v["id"].as_u64()) {
-                ed.target = Target::Operation(id);
+            // Added: from now on the editor edits the operation, tool or setup it made.
+            match (ed.target, v["id"].as_u64()) {
+                (Target::NewOperation(_), Some(id)) => ed.target = Target::Operation(id),
+                (Target::NewTool, Some(id)) => ed.target = Target::Tool(id),
+                (Target::NewSetup, Some(id)) => ed.target = Target::Setup(id),
+                _ => {}
             }
-            let warnings: Vec<String> =
+            let mut warnings: Vec<String> =
                 v["notice"]["issues"].as_array().into_iter().flatten().filter_map(|i| i["message"].as_str().map(str::to_string)).collect();
+            // A plain command says what it did (Tool Kit: the tools it added).
+            if let (Target::Run(_), Some(info)) = (ed.target, v["notice"]["info"].as_str()) {
+                warnings.insert(0, info.to_string());
+            }
             if let Some(now) = saved(app, ed.target) {
                 ed.base = now.clone();
                 ed.set_draft(now);
@@ -302,7 +442,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let Some(mut ed) = app.cam_editor.take() else { return };
     // Deleted (or undone away): nothing left to edit.
     let now = match ed.target {
-        Target::NewOperation(_) => ed.base.clone(),
+        target if target.unsaved() => ed.base.clone(),
         target => match saved(app, target) {
             Some(v) => v,
             None => return,
@@ -323,7 +463,14 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         (Some(n), Target::Operation(_)) => n.to_string(),
         (Some(n), Target::NewOperation(_)) => format!("New operation: {n}"),
         (Some(n), Target::Setup(_)) => format!("Setup: {n}"),
+        (Some(n), Target::NewTool) => solidcraft_ui_text::format("manufacture.form.new_tool", &[("name", n)]),
+        (Some(n), Target::NewSetup) => solidcraft_ui_text::format("manufacture.form.new_setup", &[("name", n)]),
+        (_, Target::Run(command)) => run_title(command).to_string(),
         (None, _) => kind_label(ed.target.noun()),
+    };
+    let run_fields = match ed.target {
+        Target::Run(command) => run_choices(app, command),
+        _ => Vec::new(),
     };
     let uses = match ed.target {
         Target::Tool(id) => app.session.doc.manufacture.tool_uses(id),
@@ -339,12 +486,14 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     };
     let tools: Vec<(u64, String)> = app.session.doc.manufacture.tools.tools.iter().map(|tl| (tl.id, format!("T{} {}", tl.number, tl.name))).collect();
     let machines: Vec<(String, cam::machine::Machine)> = match ed.target {
-        Target::Setup(_) => solidcraft_engine::cmd::cam::known_machines(&app.session).into_iter().map(|e| (e.id, e.machine)).collect(),
+        Target::Setup(_) | Target::NewSetup => {
+            solidcraft_engine::cmd::cam::known_machines(&app.session).into_iter().map(|e| (e.id, e.machine)).collect()
+        }
         _ => Vec::new(),
     };
     // Points the designer placed (construction points), for the setup's origin.
     let points: Vec<String> = match ed.target {
-        Target::Setup(_) => app
+        Target::Setup(_) | Target::NewSetup => app
             .session
             .model
             .state()
@@ -411,13 +560,21 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                                 }
                                 fields(ui, draft, inputs, &tools, None, picked.as_ref());
                             }
-                            Target::Tool(_) => tool_fields(ui, draft, inputs, uses),
+                            Target::Tool(_) | Target::NewTool => tool_fields(ui, draft, inputs, uses),
                             Target::Setup(id) => {
                                 if let Some(extra) = setup_fields(ui, draft, inputs, *id, &setups, origin, &points, &machines) {
                                     *place = Some(extra);
                                     apply_now = true;
                                 }
                             }
+                            // Not created yet: it comes after every setup there is.
+                            Target::NewSetup => {
+                                if let Some(extra) = setup_fields(ui, draft, inputs, u64::MAX, &setups, origin, &points, &machines) {
+                                    *place = Some(extra);
+                                    apply_now = true;
+                                }
+                            }
+                            Target::Run(_) => run_form(ui, draft, inputs, &setups, &run_fields),
                         }
                     });
                 }
@@ -816,7 +973,8 @@ fn setup_fields(
         crate::ui_kit::row(ui, "Program", |ui| crate::ui_kit::text_field(ui, program, "the setup's name"));
     }
     // The stock, and where it comes from.
-    let here = setups.iter().position(|x| x.0 == id).unwrap_or(0);
+    // A setup not created yet comes after every one there is.
+    let here = setups.iter().position(|x| x.0 == id).unwrap_or(setups.len());
     if let Some(stock) = st.get_mut("stock") {
         section(ui, "Stock", true, |ui| {
             let modes = cam::ops::variants::<cam::setup::Stock>(json!({"mode": "\u{1}"}));
@@ -923,6 +1081,37 @@ fn setup_fields(
         }
     });
     flip
+}
+
+/// A plain command's form: the setup it is for (when it takes one), then a dropdown for each
+/// parameter with choices, then any other parameter as its own field.
+fn run_form(
+    ui: &mut egui::Ui,
+    draft: &mut Value,
+    inputs: &mut Inputs,
+    setups: &[(u64, String)],
+    choices: &[(&'static str, &'static str, Vec<String>)],
+) {
+    let Value::Object(p) = draft else { return };
+    if let Some(current) = p.get("setup").and_then(Value::as_u64) {
+        let mut k = setups.iter().position(|x| x.0 == current).unwrap_or(0);
+        let names: Vec<&str> = setups.iter().map(|x| x.1.as_str()).collect();
+        crate::ui_kit::row(ui, tr("manufacture.field.setup"), |ui| crate::ui_kit::dropdown(ui, "cam_ed_run_setup", &mut k, &names));
+        if let Some(x) = setups.get(k) {
+            p.insert("setup".into(), json!(x.0));
+        }
+    }
+    for (key, label, list) in choices {
+        let v = p.entry(key.to_string()).or_insert_with(|| json!(list.first().cloned().unwrap_or_default()));
+        value(ui, inputs, key, label, v, Some(list.as_slice()));
+    }
+    let rest: Vec<String> = p.keys().filter(|k| k.as_str() != "setup" && !choices.iter().any(|c| c.0 == k.as_str())).cloned().collect();
+    for key in rest {
+        if let Some(v) = p.get_mut(&key) {
+            let label = label_of(&key, v);
+            value(ui, inputs, &key, &label, v, None);
+        }
+    }
 }
 
 /// The sizes a tool kind starts with (a tool of `diameter` mm).

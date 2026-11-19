@@ -2683,14 +2683,7 @@ fn post(s: &mut Session, p: &Value) -> Result<Value> {
             ),
         ));
     }
-    let default_post = if !st.machine.post.is_empty() {
-        st.machine.post.as_str()
-    } else if st.machine.axis_count() > 3 {
-        "fiveaxis"
-    } else {
-        "generic"
-    };
-    let post_id = str_(p, "post").unwrap_or(default_post);
+    let post_id = str_(p, "post").unwrap_or(cam::post::Post::default_for(&st.machine));
     let mut post =
         cam::post::Post::builtin(post_id).ok_or_else(|| bad(cmd, format!("unknown post `{post_id}`: {}", cam::post::Post::BUILTIN.join(" | "))))?;
     if let Some(n) = p.get("line_numbers").and_then(Value::as_u64) {

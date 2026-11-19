@@ -110,6 +110,23 @@ impl SolveApp {
                 let mut params = params;
                 params["path"] = json!(path);
                 let result = app.run(&command, params);
+                // Posting says what it wrote, with which post, or why it could not.
+                if command == "cam.post" {
+                    match &result {
+                        Ok(v) => {
+                            let post = v["post"].as_str().unwrap_or("?");
+                            let label = solidcraft_engine::cam::post::Post::builtin(post).map(|p| p.name).unwrap_or_else(|| post.to_string());
+                            let file = v["path"].as_str().unwrap_or("");
+                            let lines = v["lines"].as_u64().unwrap_or(0).to_string();
+                            let text = solidcraft_ui_text::format(
+                                "manufacture.posted",
+                                &[("post", label.as_str()), ("lines", lines.as_str()), ("file", file)],
+                            );
+                            app.set_status(text, false);
+                        }
+                        Err(e) => app.set_status(solidcraft_ui_text::format("manufacture.post_failed", &[("error", e.to_string().as_str())]), true),
+                    }
+                }
                 if command == "parameters.export"
                     && let Some(dialog) = app.params.as_mut()
                 {
