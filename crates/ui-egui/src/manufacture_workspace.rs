@@ -247,8 +247,65 @@ const PANEL_WIDTH: f32 = 305.0;
 /// its panels and places the view cube and overlays beside it.
 const PANEL_ID: &str = "manufacture:panel";
 
-/// The right-hand strip the panel takes, between the ribbon and the status bar.
+/// Where the panel's folded state is kept (with the window layout, so it lasts between runs).
+fn folded_id() -> egui::Id {
+    egui::Id::unique("sc_manufacture_panel_folded")
+}
+
+/// Whether the panel is folded down to its Show button, leaving the viewport whole.
+fn folded(ctx: &egui::Context) -> bool {
+    ctx.data_mut(|d| d.get_persisted::<bool>(folded_id())).unwrap_or(false)
+}
+
+fn set_folded(ctx: &egui::Context, on: bool) {
+    ctx.data_mut(|d| d.insert_persisted(folded_id(), on));
+}
+
+/// The folded panel's inner margin, round its Show toggle.
+const FOLDED_MARGIN: f32 = 10.0;
+
+/// A fold toggle: the kit's disclosure chevron (down while the content shows, right while it is
+/// folded) beside a plain text label; a click on either toggles. True when clicked.
+pub(crate) fn fold_toggle(ui: &mut egui::Ui, open: bool, text: &str, tip: &str) -> bool {
+    use crate::ui_kit::BackingTooltipExt as _;
+    let t = Tokens::get();
+    ui.horizontal(|ui| {
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(t.form_section_icon_size, t.form_section_icon_size), egui::Sense::hover());
+        let arrow = crate::ui_kit::disclosure_button_at(ui, rect, open, tip);
+        let label = ui.add(egui::Label::new(text).sense(egui::Sense::click())).backing_on_hover_text(tip);
+        arrow.clicked() || label.clicked()
+    })
+    .inner
+}
+
+/// The folded panel's size: its Show toggle measured in the current language, so a longer
+/// translation is not clipped.
+fn folded_size(ctx: &egui::Context) -> egui::Vec2 {
+    let t = Tokens::get();
+    let font = egui::TextStyle::Body.resolve(&ctx.global_style());
+    let text = ctx
+        .layer_painter(egui::LayerId::background())
+        .layout_no_wrap(solidcraft_ui_text::tr("manufacture.panel.show").to_owned(), font, Color32::PLACEHOLDER)
+        .size();
+    let spacing = ctx.global_style().spacing.item_spacing.x;
+    let row = text.y.max(t.form_section_icon_size);
+    egui::vec2(t.form_section_icon_size + spacing + text.x, row) + egui::Vec2::splat(2.0 * FOLDED_MARGIN)
+}
+
+/// The right-hand strip the panel takes, between the ribbon and the status bar (folded, just
+/// its Show toggle's corner).
 fn panel_rect(app: &SolveApp, ctx: &egui::Context, domain: egui::Rect) -> egui::Rect {
+    let full = full_panel_rect(app, ctx, domain);
+    if folded(ctx) {
+        let size = folded_size(ctx);
+        let left = (full.right() - size.x.ceil()).max(full.left());
+        let bottom = (full.top() + size.y.ceil()).min(full.bottom());
+        return egui::Rect::from_min_max(egui::pos2(left, full.top()), egui::pos2(full.right(), bottom));
+    }
+    full
+}
+
+fn full_panel_rect(app: &SolveApp, ctx: &egui::Context, domain: egui::Rect) -> egui::Rect {
     let gap = crate::ui_kit::Container::new(ctx, crate::ui_kit::Surface::Panel).gap();
     let mut area = domain;
     if crate::status_bar::shown(app) {
@@ -283,6 +340,15 @@ pub fn panel(app: &mut SolveApp, ui: &mut egui::Ui) {
     let mut host = ui.new_child(egui::UiBuilder::new().id_salt("sc_manufacture").max_rect(rect));
     host.set_clip_rect(rect);
     crate::ui_kit::Container::paint_frame(host.painter(), frame, rect);
+    // Folded: only the toggle that opens the panel again.
+    if folded(ui.ctx()) {
+        let mut inner = host.new_child(egui::UiBuilder::new().max_rect(rect.shrink(FOLDED_MARGIN)));
+        let show = solidcraft_ui_text::tr("manufacture.panel.show");
+        if fold_toggle(&mut inner, false, show, solidcraft_ui_text::tr("manufacture.panel.show_tip")) {
+            set_folded(ui.ctx(), false);
+        }
+        return;
+    }
     let inner = rect.shrink(10.0);
     let mut body = host.new_child(egui::UiBuilder::new().max_rect(inner));
     body.set_clip_rect(inner);
@@ -293,8 +359,17 @@ pub fn panel(app: &mut SolveApp, ui: &mut egui::Ui) {
         let ui = &mut body;
         {
             crate::ui_kit::scope(ui, |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| {
+                // The heading, with Hide at its end: folds the panel away to see more of the model.
+                ui.horizontal(|ui| {
                     ui.heading(solidcraft_ui_text::tr_label("Manufacture"));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let hide = solidcraft_ui_text::tr("manufacture.panel.hide");
+                        if fold_toggle(ui, true, hide, solidcraft_ui_text::tr("manufacture.panel.hide_tip")) {
+                            set_folded(ui.ctx(), true);
+                        }
+                    });
+                });
+                egui::ScrollArea::vertical().show(ui, |ui| {
                     let s = &app.session;
                     let m = &s.doc.manufacture;
                     if m.tools.tools.is_empty() && m.setups.is_empty() {
@@ -306,11 +381,16 @@ pub fn panel(app: &mut SolveApp, ui: &mut egui::Ui) {
                         return;
                     }
                     ui.add_space(t.space_8);
-                    ui.label(RichText::new(solidcraft_ui_text::tr_label("Tools")).strong());
-                    for tool in &m.tools.tools {
-                        let kind = serde_json::to_value(tool.kind).ok().and_then(|v| v["kind"].as_str().map(str::to_string)).unwrap_or_default();
-                        ui.label(format!("T{}  {}  Ø{} {}", tool.number, tool.name, tool.diameter, kind.replace('_', " ")));
-                    }
+                    // A long tool library would push the setups off the panel: the list folds
+                    // (closed by default; the kit's section remembers the choice).
+                    let tools = solidcraft_ui_text::tr_label("Tools");
+                    crate::ui_kit::section_count(ui, "sc_manufacture_tools", tools, false, Some(m.tools.tools.len()), |ui| {
+                        for tool in &m.tools.tools {
+                            let kind =
+                                serde_json::to_value(tool.kind).ok().and_then(|v| v["kind"].as_str().map(str::to_string)).unwrap_or_default();
+                            ui.label(format!("T{}  {}  Ø{} {}", tool.number, tool.name, tool.diameter, kind.replace('_', " ")));
+                        }
+                    });
                     for st in &m.setups {
                         ui.add_space(t.space_8);
                         ui.label(RichText::new(format!("{}  ·  {} ({} axes)", st.name, st.machine.name, st.machine.axis_count())).strong());
