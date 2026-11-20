@@ -624,13 +624,9 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                                         });
                                         ui.add_space(t.space_8);
                                     }
-                                    if empty {
-                                        ui_kit::text(
-                                            ui,
-                                            &solidcraft_ui_text::format("search.try", &[("example", r#"solid.extrude {"distance": 20}"#)]),
-                                            ui_kit::Text::Note("search_try"),
-                                        );
-                                    }
+                                    // No hint about typing a command call: picking a command opens
+                                    // its form. (A typed call still runs, for those who know them.)
+                                    let _ = empty;
                                 }
                             });
                         });

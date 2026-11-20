@@ -1397,6 +1397,9 @@ preference_settings! {
     file_operations_wait: bool = false, PAGE_LAYOUT;
     /// Toolbar tabs hidden by the person. An empty list keeps every existing tab visible.
     hidden_toolbar_tabs: Vec<String> = Vec::new(), PAGE_LAYOUT;
+    /// Toolbar tabs beside Model the person turned on (SolidCraft CAM): Model holds every design
+    /// tool, so the others start hidden ([`crate::workspace::HIDDEN_AT_FIRST`]).
+    shown_toolbar_tabs: Vec<String> = Vec::new(), PAGE_LAYOUT;
     /// Show the ribbon's panel drop-downs as a grid of large icons, their names in the tooltips,
     /// instead of a list of small icons with names (#4739).
     ribbon_icon_grid: bool = false, PAGE_LAYOUT;
@@ -4293,6 +4296,7 @@ fn limit_toolbar_tabs(mut p: Prefs) -> Prefs {
     }
     let allowed: Vec<&str> = crate::workspace::choosable_tabs().collect();
     p.hidden_toolbar_tabs = known_once(std::mem::take(&mut p.hidden_toolbar_tabs), &allowed);
+    p.shown_toolbar_tabs = known_once(std::mem::take(&mut p.shown_toolbar_tabs), &allowed);
     p
 }
 

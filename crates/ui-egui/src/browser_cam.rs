@@ -424,15 +424,7 @@ pub fn run_action(app: &mut SolveApp, id: &str, p: &Value) {
             }
         }
         "ui.camPost" => {
-            let name = num("setup")
-                .and_then(|s| app.session.doc.manufacture.setup(s))
-                .map(|st| if st.program.is_empty() { st.name.clone() } else { st.program.clone() })
-                .unwrap_or_else(|| "program".into());
-            let ext = num("setup")
-                .and_then(|s| app.session.doc.manufacture.setup(s))
-                .map(|st| if st.machine.post == "makera" { "cnc" } else { "nc" })
-                .unwrap_or("nc");
-            app.pick_save_command(&format!("{name}.{ext}"), &["cnc", "nc", "gcode", "ngc", "tap"], "cam.post", p.clone());
+            crate::cam_editor::open_post(app, num("setup"));
         }
         _ => {}
     }

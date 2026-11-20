@@ -81,6 +81,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("joint.as_built", "As-Built Joint", crate::checked!("joint.as_built", as_built))
         .at("SOLID", "ASSEMBLE")
         .icon("as_built")
+        .key("Shift+J")
         .contract(&AS_BUILT_CONTRACT)
         .output(output_schema_for::<JointAddedResult>)
         .params(

@@ -812,6 +812,8 @@ fn body_items(app: &SolveApp, bodies: &[String], browser: bool) -> Vec<Item> {
         act("ui.material", "Physical Material", "material").with(json!({ "bodies": names })),
         act("ui.appearance", "Appearance", "appearance").key("A").with(json!({ "bodies": names })),
         act("ui.properties", "Properties", "measure").with(json!({ "bodies": names })),
+        // Repair Part on the body clicked, in its form (gap, patch holes), never a typed call.
+        act("ui.repair", "Repair Part", "body").with(json!({ "bodies": names })).on(one && !locked),
         Item::sep(),
         act("ui.saveMesh", "Save As Mesh", "export").with(json!({ "bodies": names })),
         act("ui.sendToSlicer", "Send to Slicer", "export").with(json!({ "bodies": names })).on(crate::dialogs_save_mesh::available(app)),
@@ -2015,6 +2017,11 @@ pub fn run_item(app: &mut SolveApp, item: &Item, at: Pos2) {
             let items: Vec<Value> = bodies.iter().map(|b| json!({"type": "body", "name": b})).collect();
             let _ = app.run("select.set", json!({ "items": items }));
             app.start("material.assign");
+        }
+        "ui.repair" => {
+            if let Some(b) = bodies.first() {
+                crate::cam_editor::open_command(app, "body.repair", json!({"body": b, "patch_holes": true}));
+            }
         }
         "ui.saveMesh" | "ui.sendToSlicer" => {
             let items: Vec<Value> = bodies.iter().map(|b| json!({"type": "body", "name": b})).collect();

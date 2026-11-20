@@ -4117,6 +4117,8 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let mut cancel = false;
     let mut enter = false;
     let mut value_fields = Vec::new();
+    // Solid / Surface (SolidCraft CAM): the form's choice switches to the other command's form.
+    let mut switch_to: Option<&'static str> = None;
 
     let raw_title = title_of(&d);
     let heading =
@@ -4208,6 +4210,16 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
             }
             let body = |ui: &mut egui::Ui| {
+                if d.editing.is_none()
+                    && !press_pull_extrude(&d)
+                    && let Some((now, other, labels)) = dense::command(&d.kind).and_then(body_type_pair)
+                {
+                    let mut pick = now;
+                    crate::ui_kit::choice_row(ui, "Body type", "sc_body_type", &mut pick, labels);
+                    if pick != now {
+                        switch_to = Some(other);
+                    }
+                }
                 d.sync_fillet_chain(&app.session);
                 crate::hole_presets::rows(ui, &mut d, &mut app.preferences.hole_presets, &app.session.doc, reset_scroll);
                 crate::personal_sheet_rules::rows(ui, &mut d, &mut app.preferences.personal_sheet_rules, &app.session.doc, reset_scroll);
@@ -4500,6 +4512,48 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     if let Some(id) = then_start {
         app.start(id);
     }
+    // Solid / Surface changed: the other command's form, keeping what was picked.
+    if let Some(other) = switch_to
+        && app.dialog.as_ref().is_some_and(|d| d.editing.is_none())
+        && let Some(mut next) = Dialog::for_command(app, other)
+    {
+        if let Some(old) = app.dialog.take() {
+            for (i, input) in old.inputs.iter().enumerate() {
+                // Solid Extrude's Profiles and Surface Extrude's Profiles or curves overlap:
+                // what was picked carries over when the new box takes that kind of thing.
+                if let Some(n) = next.inputs.get_mut(i)
+                    && n.accept & input.accept != 0
+                {
+                    n.items = input.items.clone();
+                }
+            }
+        }
+        app.dialog = Some(next);
+    }
+}
+
+/// One menu entry for a command's solid and surface versions (SolidCraft CAM): the form's Body
+/// type choice switches between them. Solid first (the default).
+pub(crate) const BODY_TYPE_PAIRS: &[(&str, &str, [&str; 2])] = &[
+    ("solid.extrude", "surface.extrude", ["Solid", "Surface"]),
+    ("solid.revolve", "surface.revolve", ["Solid", "Surface"]),
+    ("solid.sweep", "surface.sweep", ["Solid", "Surface"]),
+    ("solid.loft", "surface.loft", ["Solid", "Surface"]),
+    ("solid.offset_face", "surface.offset", ["Move the faces", "Make a new surface"]),
+];
+
+/// For a command in [`BODY_TYPE_PAIRS`]: which of the two it is (0 solid, 1 surface), the other
+/// one, and the choice's labels.
+fn body_type_pair(cmd: &str) -> Option<(usize, &'static str, &'static [&'static str])> {
+    BODY_TYPE_PAIRS.iter().find_map(|(solid, surface, labels)| {
+        if cmd == *solid {
+            Some((0, *surface, &labels[..]))
+        } else if cmd == *surface {
+            Some((1, *solid, &labels[..]))
+        } else {
+            None
+        }
+    })
 }
 
 /// The values retained after a command succeeds; selection-dependent values are refreshed.

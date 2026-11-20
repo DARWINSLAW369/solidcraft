@@ -767,7 +767,15 @@ pub fn page(app: &mut SolveApp, ui: &mut egui::Ui) {
         // Keep registry order within each real registry group; no command is lost because it
         // has no ribbon placement. Such commands use their registry id's namespace.
         let mut groups: Vec<(String, Vec<_>)> = Vec::new();
-        for (c, keys, label, group) in commands {
+        // Commands that have a key come first, all together (SolidCraft CAM): nobody scrolls
+        // past a hundred unassigned ones to find what a key does.
+        let (with_key, without): (Vec<_>, Vec<_>) = commands.into_iter().partition(|(_, keys, _, _)| !keys.is_empty());
+        if !with_key.is_empty() {
+            let mut rows: Vec<_> = with_key.into_iter().map(|(c, keys, label, _)| (c, keys, label)).collect();
+            rows.sort_by(|a, b| a.2.to_lowercase().cmp(&b.2.to_lowercase()));
+            groups.push((app.tr_label("With a shortcut key").to_string(), rows));
+        }
+        for (c, keys, label, group) in without {
             if let Some((_, rows)) = groups.iter_mut().find(|(name, _)| name == &group) {
                 rows.push((c, keys, label));
             } else {

@@ -57,6 +57,61 @@ pub fn start(app: &mut SolveApp, id: &str) -> bool {
         return false;
     }
     let setup = selected_setup(app);
+    // The Setup panel's buttons open forms: labelled fields, dropdowns and OK / Cancel (the
+    // form's JSON tab and the command box still take the raw call).
+    match id {
+        "cam.tool.add" => {
+            crate::cam_editor::open_new_tool(app);
+            return true;
+        }
+        // New Setup and Set Zero: two clicks (the top face, then the zero point), no form; the
+        // full form is behind the panel's Advanced button.
+        "cam.setup.create" => {
+            crate::cam_editor::open_quick_setup(app, None);
+            return true;
+        }
+        "cam.setup.zero" => {
+            crate::cam_editor::open_quick_setup(app, setup);
+            return true;
+        }
+        "cam.tool.kit" => {
+            let mut params = json!({"kit": "makera_essential", "material": "aluminium"});
+            if let Some(s) = setup {
+                params["setup"] = json!(s);
+            }
+            crate::cam_editor::open_run(app, "cam.tool.kit", params);
+            return true;
+        }
+        "cam.machine.set" => {
+            let Some(s) = setup else {
+                app.set_status("Create a setup first: its form lets you pick the machine too.".to_string(), false);
+                crate::cam_editor::open_new_setup(app);
+                return true;
+            };
+            // Start from the setup's own machine when it is a known one.
+            let current = app.session.doc.manufacture.setup(s).map(|st| st.machine.name.clone()).unwrap_or_default();
+            let machine = solidcraft_engine::cmd::cam::known_machines(&app.session)
+                .into_iter()
+                .find(|e| e.machine.name == current)
+                .map(|e| e.id)
+                .unwrap_or_else(|| "three_axis".to_string());
+            crate::cam_editor::open_run(app, "cam.machine.set", json!({"setup": s, "machine": machine}));
+            return true;
+        }
+        _ => {}
+    }
+    // An operation needs a setup to go into: with none yet, its form comes first.
+    let makes_operation = id.strip_prefix("cam.operation.").is_some_and(|k| !matches!(k, "set" | "remove" | "list" | "kinds" | "move" | "duplicate"));
+    if makes_operation && setup.is_none() {
+        app.set_status("Create a setup first, then pick the operation again.".to_string(), false);
+        crate::cam_editor::open_new_setup(app);
+        return true;
+    }
+    // With no tool in the library the form still opens (its Tool box empty), so a button can be
+    // clicked just to see what it does; OK asks for a tool.
+    if makes_operation && app.session.doc.manufacture.tools.tools.is_empty() {
+        app.set_status("No tools yet: add one with Add Tool, then pick it in the form's Tool box.".to_string(), false);
+    }
     let m = &app.session.doc.manufacture;
     let tool = m.tools.tools.first().map(|t| t.id);
     let template = match id {
@@ -93,14 +148,18 @@ pub fn start(app: &mut SolveApp, id: &str) -> bool {
         return true;
     }
     if let Some(template) = template {
-        crate::shortcut_box::open(app, None);
-        app.sbox.text = format!("{id} {}", serde_json::to_string(&template).unwrap_or_default());
+        // Its form, filled in with the template (never the command box).
+        if let Some(spec) = solidcraft_engine::find_command(id) {
+            crate::cam_editor::open_run(app, spec.id, template);
+        }
+        return true;
+    }
+    // A CAM command that needs parameters opens its form built from them.
+    if crate::auto_form::needs_form(id) && crate::cam_editor::open_command(app, id, json!({})) {
         return true;
     }
     if id == "cam.post" {
-        let name =
-            app.session.doc.manufacture.setups.first().map(|s| s.program.clone()).filter(|n| !n.is_empty()).unwrap_or_else(|| "program".into());
-        app.pick_save_command(&format!("{name}.nc"), &["nc", "gcode", "ngc", "tap"], "cam.post", json!({}));
+        crate::cam_editor::open_post(app, None);
         return true;
     }
     if id == "cam.generate" {
@@ -178,7 +237,8 @@ fn kind_template(kind: &str, setup: Option<u64>, tool: Option<u64>, tools: &[(u6
         "laser_cut" | "laser_engrave" => tools.iter().find(|t| t.1).map(|t| t.0).or(tool),
         _ => tools.iter().find(|t| !t.1).map(|t| t.0).or(tool),
     };
-    let mut call = json!({"setup": setup, "tool": tool, "name": kind_name});
+    // No tool yet: 0 (no tool has id 0), so the form opens with its Tool box empty.
+    let mut call = json!({"setup": setup, "tool": tool.unwrap_or(0), "name": kind_name});
     if let (Value::Object(c), Value::Object(p)) = (&mut call, params) {
         for (k, v) in p {
             c.insert(k, v);
@@ -205,8 +265,36 @@ const PANEL_WIDTH: f32 = 305.0;
 /// its panels and places the view cube and overlays beside it.
 const PANEL_ID: &str = "manufacture:panel";
 
-/// The right-hand strip the panel takes, between the ribbon and the status bar.
+/// Where the panel's folded state is kept (with the window layout, so it lasts between runs).
+fn folded_id() -> egui::Id {
+    egui::Id::unique("sc_manufacture_panel_folded")
+}
+
+/// Whether the panel is folded down to its Show button, leaving the viewport whole.
+fn folded(ctx: &egui::Context) -> bool {
+    ctx.data_mut(|d| d.get_persisted::<bool>(folded_id())).unwrap_or(false)
+}
+
+fn set_folded(ctx: &egui::Context, on: bool) {
+    ctx.data_mut(|d| d.insert_persisted(folded_id(), on));
+}
+
+/// The folded panel: a button at the top right that opens it again.
+const FOLDED_SIZE: egui::Vec2 = egui::vec2(170.0, 44.0);
+
+/// The right-hand strip the panel takes, between the ribbon and the status bar (folded, just
+/// its Show button's corner).
 fn panel_rect(app: &SolveApp, ctx: &egui::Context, domain: egui::Rect) -> egui::Rect {
+    let full = full_panel_rect(app, ctx, domain);
+    if folded(ctx) {
+        let left = (full.right() - FOLDED_SIZE.x).max(full.left());
+        let bottom = (full.top() + FOLDED_SIZE.y).min(full.bottom());
+        return egui::Rect::from_min_max(egui::pos2(left, full.top()), egui::pos2(full.right(), bottom));
+    }
+    full
+}
+
+fn full_panel_rect(app: &SolveApp, ctx: &egui::Context, domain: egui::Rect) -> egui::Rect {
     let gap = crate::ui_kit::Container::new(ctx, crate::ui_kit::Surface::Panel).gap();
     let mut area = domain;
     if crate::status_bar::shown(app) {
@@ -234,11 +322,26 @@ pub fn reserve(app: &mut SolveApp, ctx: &egui::Context, domain: egui::Rect) {
 pub fn panel(app: &mut SolveApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     let mut run: Option<&'static str> = None;
+    // A setup whose editor (stock, origin, machine) a button asked for.
+    let mut edit_setup: Option<u64> = None;
     let Some(rect) = app.shell.workspace_panels.get(PANEL_ID).copied() else { return };
     let frame = crate::ui_kit::Container::new(ui.ctx(), crate::ui_kit::Surface::Panel).edge_frame(t.panel);
     let mut host = ui.new_child(egui::UiBuilder::new().id_salt("sc_manufacture").max_rect(rect));
     host.set_clip_rect(rect);
     crate::ui_kit::Container::paint_frame(host.painter(), frame, rect);
+    // Folded: only a button that opens the panel again.
+    if folded(ui.ctx()) {
+        let mut inner = host.new_child(egui::UiBuilder::new().max_rect(rect.shrink(6.0)));
+        inner.centered_and_justified(|ui| {
+            if crate::ui_kit::button(ui, format!("◀  {}", solidcraft_ui_text::tr_label("Show Manufacture")), crate::ui_kit::Button::Normal)
+                .on_hover_text(solidcraft_ui_text::tr_label("Open the Manufacture panel"))
+                .clicked()
+            {
+                set_folded(ui.ctx(), false);
+            }
+        });
+        return;
+    }
     let inner = rect.shrink(10.0);
     let mut body = host.new_child(egui::UiBuilder::new().max_rect(inner));
     body.set_clip_rect(inner);
@@ -249,8 +352,19 @@ pub fn panel(app: &mut SolveApp, ui: &mut egui::Ui) {
         let ui = &mut body;
         {
             crate::ui_kit::scope(ui, |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| {
+                // The heading, with Hide at its end: folds the panel away to see more of the model.
+                ui.horizontal(|ui| {
                     ui.heading(solidcraft_ui_text::tr_label("Manufacture"));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if crate::ui_kit::button(ui, format!("{}  ▶", solidcraft_ui_text::tr_label("Hide")), crate::ui_kit::Button::Normal)
+                            .on_hover_text(solidcraft_ui_text::tr_label("Fold the Manufacture panel away"))
+                            .clicked()
+                        {
+                            set_folded(ui.ctx(), true);
+                        }
+                    });
+                });
+                egui::ScrollArea::vertical().show(ui, |ui| {
                     let s = &app.session;
                     let m = &s.doc.manufacture;
                     if m.tools.tools.is_empty() && m.setups.is_empty() {
@@ -262,14 +376,25 @@ pub fn panel(app: &mut SolveApp, ui: &mut egui::Ui) {
                         return;
                     }
                     ui.add_space(t.space_8);
-                    ui.label(RichText::new(solidcraft_ui_text::tr_label("Tools")).strong());
-                    for tool in &m.tools.tools {
-                        let kind = serde_json::to_value(tool.kind).ok().and_then(|v| v["kind"].as_str().map(str::to_string)).unwrap_or_default();
-                        ui.label(format!("T{}  {}  Ø{} {}", tool.number, tool.name, tool.diameter, kind.replace('_', " ")));
-                    }
+                    // A long tool library would push the setups off the panel: the list folds
+                    // (closed by default; egui remembers the choice).
+                    let tools_title = format!("{} ({})", solidcraft_ui_text::tr_label("Tools"), m.tools.tools.len());
+                    egui::CollapsingHeader::new(RichText::new(tools_title).strong()).id_salt("sc_manufacture_tools").default_open(false).show(ui, |ui| {
+                        for tool in &m.tools.tools {
+                            let kind =
+                                serde_json::to_value(tool.kind).ok().and_then(|v| v["kind"].as_str().map(str::to_string)).unwrap_or_default();
+                            ui.label(format!("T{}  {}  Ø{} {}", tool.number, tool.name, tool.diameter, kind.replace('_', " ")));
+                        }
+                    });
                     for st in &m.setups {
                         ui.add_space(t.space_8);
                         ui.label(RichText::new(format!("{}  ·  {} ({} axes)", st.name, st.machine.name, st.machine.axis_count())).strong());
+                        if crate::ui_kit::button(ui, solidcraft_ui_text::tr_label("Edit setup and machine").to_string(), crate::ui_kit::Button::Normal)
+                            .on_hover_text(solidcraft_ui_text::tr_label("Open this setup's form: stock, origin, and the machine's numbers"))
+                            .clicked()
+                        {
+                            edit_setup = Some(st.id);
+                        }
                         if st.operations.is_empty() {
                             ui.label(RichText::new(solidcraft_ui_text::tr_label("No operations.")).color(t.text_dim));
                         }
@@ -321,5 +446,8 @@ pub fn panel(app: &mut SolveApp, ui: &mut egui::Ui) {
     }
     if let Some(id) = run {
         app.start(id);
+    }
+    if let Some(sid) = edit_setup {
+        crate::browser::cam::edit_setup(app, sid);
     }
 }

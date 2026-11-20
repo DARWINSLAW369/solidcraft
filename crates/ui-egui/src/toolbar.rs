@@ -1655,9 +1655,38 @@ fn ribbon_contents(app: &mut SolveApp, ui: &mut egui::Ui, shape: RibbonShape) ->
                             // an earlier, shorter list (#874); they still shrink to fit their content.
                             let room = (ui.ctx().content_rect().bottom() - ui.cursor().top() - 64.0).max(ROW_H * 3.0);
                             egui::ScrollArea::vertical().id_salt("panel_menu_rows").max_height(room).min_scrolled_height(room).show(ui, |ui| {
+                                // Headings after a menu's first start folded (SolidCraft CAM): a click
+                                // on one opens or closes it. Commands in no group always show.
+                                let loose = crate::workspace::ungrouped(&tab, panel, &cmds);
+                                let mut folded = false;
                                 for (heading, c) in &grouped {
                                     if let Some(heading) = heading {
-                                        ribbon::section_heading(ui, &group_heading_text(heading), row_w);
+                                        if crate::workspace::folds(&tab, panel, heading) {
+                                            let key = egui::Id::new(("sc_menu_fold", tab.to_string(), panel.to_string(), heading.to_string()));
+                                            let mut open = ui.ctx().data(|d| d.get_temp::<bool>(key)).unwrap_or(false);
+                                            let arrow = if open { "▾" } else { "▸" };
+                                            let (rect, r) = ui.allocate_exact_size(egui::vec2(row_w, ROW_H), egui::Sense::click());
+                                            let r = r.on_hover_cursor(egui::CursorIcon::PointingHand);
+                                            let color = if r.hovered() { ui.visuals().strong_text_color() } else { ui.visuals().text_color() };
+                                            ui.painter().text(
+                                                rect.left_center() + egui::vec2(8.0, 0.0),
+                                                egui::Align2::LEFT_CENTER,
+                                                format!("{arrow}  {}", group_heading_text(heading)),
+                                                ribbon::heading_font(),
+                                                color,
+                                            );
+                                            if r.clicked() {
+                                                open = !open;
+                                                ui.ctx().data_mut(|d| d.insert_temp(key, open));
+                                            }
+                                            folded = !open;
+                                        } else {
+                                            ribbon::section_heading(ui, &group_heading_text(heading), row_w);
+                                            folded = false;
+                                        }
+                                    }
+                                    if folded && !loose.contains(&c.id) {
+                                        continue;
                                     }
                                     let pinned = crate::toolbar_custom::pinned_on(app, &tab, c.id).is_some();
                                     let revealed = reveal.as_ref().is_some_and(|r| r.id == c.id);

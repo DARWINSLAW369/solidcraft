@@ -53,25 +53,69 @@ pub enum Target {
     NewOperation(u64),
     Tool(u64),
     Setup(u64),
+    /// A tool not added yet: OK and Apply add it (`cam.tool.add`).
+    NewTool,
+    /// A setup not created yet: OK and Apply create it (`cam.setup.create`).
+    NewSetup,
+    /// A command run with the form's parameters (Tool Kit, Set Machine): the draft is its
+    /// parameters, each a choice from a list.
+    Run(&'static str),
+    /// Any command, its form built from its parameters ([`crate::auto_form`]).
+    Command(&'static str),
 }
 
 impl Target {
-    /// The command that sets it, and the parameter naming it.
+    /// The command that sets it, and the parameter naming it (none for a new item or a plain
+    /// command run).
     fn command(self) -> (&'static str, &'static str, u64) {
         match self {
             Target::Operation(id) => ("cam.operation.set", "operation", id),
             Target::NewOperation(setup) => ("cam.operation.add", "setup", setup),
             Target::Tool(id) => ("cam.tool.set", "tool", id),
             Target::Setup(id) => ("cam.setup.set", "setup", id),
+            Target::NewTool => ("cam.tool.add", "", 0),
+            Target::NewSetup => ("cam.setup.create", "", 0),
+            Target::Run(command) | Target::Command(command) => (command, "", 0),
         }
     }
 
     fn noun(self) -> &'static str {
         match self {
             Target::Operation(_) | Target::NewOperation(_) => "operation",
-            Target::Tool(_) => "tool",
-            Target::Setup(_) => "setup",
+            Target::Tool(_) | Target::NewTool => "tool",
+            Target::Setup(_) | Target::NewSetup => "setup",
+            Target::Run(_) | Target::Command(_) => "command",
         }
+    }
+
+    /// Not saved in the design: the editor's own draft is all there is.
+    fn unsaved(self) -> bool {
+        matches!(self, Target::NewOperation(_) | Target::NewTool | Target::NewSetup | Target::Run(_) | Target::Command(_))
+    }
+}
+
+/// The choices a plain command's form offers for each of its parameters (`setup` is a dropdown
+/// of the setups, drawn apart): the parameter, its label and the values to pick from.
+fn run_choices(app: &SolveApp, command: &str) -> Vec<(&'static str, &'static str, Vec<String>)> {
+    let machines = || solidcraft_engine::cmd::cam::known_machines(&app.session).into_iter().map(|e| e.id).collect::<Vec<String>>();
+    match command {
+        "cam.tool.kit" => vec![
+            ("kit", "Tool kit", cam::kits::KITS.iter().map(|k| k.to_string()).collect()),
+            ("material", "Material", vec!["aluminium".into(), "wood".into(), "plastic".into()]),
+        ],
+        "cam.machine.set" => vec![("machine", "Machine", machines())],
+        "cam.post" => vec![("post", "Post processor", cam::post::Post::BUILTIN.iter().map(|p| p.to_string()).collect())],
+        _ => Vec::new(),
+    }
+}
+
+/// The window title of a plain command's form.
+fn run_title(command: &str) -> &'static str {
+    match command {
+        "cam.tool.kit" => "Add Tool Kit",
+        "cam.machine.set" => "Set Machine",
+        "cam.post" => "Post Program",
+        _ => "Run Command",
     }
 }
 
@@ -101,6 +145,24 @@ pub struct CamEditor {
     pub place: Option<Value>,
     /// Placing a setup's origin: the choices in the form, and picking on the model.
     pub origin: OriginForm,
+    /// Folded down to its title and buttons, to see more of the model.
+    pub minimized: bool,
+    /// A command's own form ([`Target::Command`]): its fields.
+    pub auto: Vec<crate::auto_form::AutoField>,
+    /// The two-click setup (New Setup, Set Zero): which click comes next. `None`: the full form.
+    pub quick: Option<Quick>,
+    /// The selection when the top-face click was asked for, so the click that changes it is the one.
+    quick_before: Option<Vec<solidcraft_engine::Sel>>,
+    /// The setup's stock as last worked out, by (setup, design revision): working it out meshes
+    /// every body of the setup (seconds on a big assembly), too slow for every frame.
+    stock_cache: Option<((u64, u64), Option<(cam::setup::StockShape, cam::frame::Frame)>)>,
+}
+
+/// The two clicks that set a setup up: the face that faces up, then the zero point.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Quick {
+    Top,
+    Zero,
 }
 
 /// Placing a setup's origin: which point of the stock or model, which construction point, and
@@ -144,6 +206,11 @@ impl CamEditor {
             message: None,
             place: None,
             origin: OriginForm::default(),
+            minimized: false,
+            auto: Vec::new(),
+            quick: None,
+            quick_before: None,
+            stock_cache: None,
         }
     }
 
@@ -202,7 +269,7 @@ fn saved(app: &SolveApp, target: Target) -> Option<Value> {
         Target::Operation(op) => serde_json::to_value(m.operation(op)?.1).ok()?,
         Target::Tool(tool) => serde_json::to_value(m.tools.get(tool)?).ok()?,
         Target::Setup(setup) => serde_json::to_value(m.setup(setup)?).ok()?,
-        Target::NewOperation(_) => return None,
+        Target::NewOperation(_) | Target::NewTool | Target::NewSetup | Target::Run(_) | Target::Command(_) => return None,
     };
     if let Value::Object(m) = &mut v {
         m.remove("id");
@@ -245,6 +312,236 @@ pub fn open_new(app: &mut SolveApp, setup: u64, kind: &str, call: &Value) -> boo
     true
 }
 
+/// Opens the editor on a new tool: a 6 mm flat end mill numbered after the library's highest,
+/// every field in the form before it is added.
+pub fn open_new_tool(app: &mut SolveApp) {
+    let number = app.session.doc.manufacture.tools.tools.iter().map(|t| t.number).max().unwrap_or(0) + 1;
+    let mut tool = cam::tool::Tool::new(0, "6 mm flat", cam::tool::ToolKind::FlatEnd, 6.0);
+    tool.number = number.min(9999);
+    let Ok(mut v) = serde_json::to_value(&tool) else { return };
+    if let Value::Object(m) = &mut v {
+        m.remove("id");
+    }
+    app.cam_editor = Some(CamEditor::new(Target::NewTool, v));
+}
+
+/// Opens the editor on a new setup, as `cam.setup.create` would make it with no parameters: the
+/// first measured from the design's origin with a box of stock round the model, a later one
+/// carrying the setup before's stock and machine over.
+pub fn open_new_setup(app: &mut SolveApp) {
+    let m = &app.session.doc.manufacture;
+    let before = m.setups.last();
+    let setup = cam::setup::Setup {
+        id: 0,
+        name: format!("Setup {}", m.setups.len() + 1),
+        bodies: Vec::new(),
+        fixtures: Vec::new(),
+        wcs: cam::frame::Frame::IDENTITY,
+        stock: if before.is_some() { cam::setup::Stock::FromSetup { setup: 0 } } else { cam::setup::Stock::default() },
+        machine: before.map_or_else(cam::machine::Machine::three_axis, |b| b.machine.clone()),
+        operations: Vec::new(),
+        program: String::new(),
+    };
+    let Ok(mut v) = serde_json::to_value(&setup) else { return };
+    if let Value::Object(o) = &mut v {
+        o.remove("id");
+        o.remove("operations");
+    }
+    app.cam_editor = Some(CamEditor::new(Target::NewSetup, v));
+}
+
+/// The stock margin a new setup starts with, on every side (the model dead centre), mm.
+const QUICK_MARGIN: f64 = 1.0;
+
+/// A box stock `margin` mm bigger than the model on every side, the model dead centre.
+fn margin_stock(margin: f64) -> Value {
+    json!({"mode": "relative_box", "x_neg": margin, "x_pos": margin, "y_neg": margin, "y_pos": margin, "z_neg": margin, "z_pos": margin})
+}
+
+/// New Setup and Set Zero: two clicks, no form. `setup`: the setup to zero; `None` makes a new
+/// one first (a box stock 1 mm around the model on every side; a later setup carries the one
+/// before's stock over). Then: click the face that faces up, then the zero point (a corner, edge
+/// or hole of the model or the stock).
+pub fn open_quick_setup(app: &mut SolveApp, setup: Option<u64>) {
+    let id = match setup {
+        Some(id) => id,
+        None => {
+            let first = app.session.doc.manufacture.setups.is_empty();
+            let params = if first { json!({"stock": margin_stock(QUICK_MARGIN)}) } else { json!({}) };
+            match app.run("cam.setup.create", params) {
+                Ok(v) => match v["id"].as_u64() {
+                    Some(id) => id,
+                    None => return,
+                },
+                Err(e) => {
+                    app.set_status(e, true);
+                    return;
+                }
+            }
+        }
+    };
+    let Some(saved_setup) = saved(app, Target::Setup(id)) else { return };
+    let mut ed = CamEditor::new(Target::Setup(id), saved_setup);
+    ed.quick = Some(Quick::Top);
+    ed.quick_before = Some(app.session.selection.clone());
+    app.cam_editor = Some(ed);
+    app.set_status("Click the face that faces up (the top of the part), or Keep Z Up.".to_string(), false);
+}
+
+/// The setup's axes turned so `z` (a picked face's normal) is up, the origin kept: x is the
+/// design's X laid into the new XY plane (its Y where X is too steep).
+fn wcs_up(app: &SolveApp, setup: u64, z: solidcore_record::Vec3) -> Option<Value> {
+    let st = app.session.doc.manufacture.setup(setup)?;
+    let n = (z.x * z.x + z.y * z.y + z.z * z.z).sqrt();
+    if n < 1e-9 {
+        return None;
+    }
+    let z = [z.x / n, z.y / n, z.z / n];
+    let lay = |a: [f64; 3]| {
+        let d = a[0] * z[0] + a[1] * z[1] + a[2] * z[2];
+        [a[0] - d * z[0], a[1] - d * z[1], a[2] - d * z[2]]
+    };
+    let len = |a: [f64; 3]| (a[0] * a[0] + a[1] * a[1] + a[2] * a[2]).sqrt();
+    let mut x = lay([1.0, 0.0, 0.0]);
+    if len(x) < 0.3 {
+        x = lay([0.0, 1.0, 0.0]);
+    }
+    let o = st.wcs.origin;
+    Some(json!({"origin": [o.x, o.y, o.z], "z": z, "x": x}))
+}
+
+/// The two-click panel: what to click next, the stock margin, Keep Z Up, Advanced and Done.
+/// Returns what was pressed.
+fn quick_panel(ui: &mut egui::Ui, ed: &mut CamEditor, step: Quick) -> Option<QuickAction> {
+    let t = Tokens::get();
+    let mut out = None;
+    let text = match step {
+        Quick::Top => "1. Click the face that faces up: the top of the part.",
+        Quick::Zero => "2. Click your zero: a corner, edge middle, face centre or hole of the model or the stock.",
+    };
+    ui.label(RichText::new(solidcraft_ui_text::tr_label(text)).strong().color(t.accent));
+    ui.add_space(t.space_8);
+    // The margin, when the stock is a box around the model (the model dead centre).
+    let relative = ed.draft["stock"]["mode"].as_str() == Some("relative_box");
+    if relative {
+        let now = ed.draft["stock"]["x_neg"].as_f64().unwrap_or(QUICK_MARGIN);
+        let shown = number_text(&json!(now));
+        if let Some(v) = typed(ui, &mut ed.inputs, "quick.margin", "Stock margin, every side (mm)", &shown, "", |s| {
+            parse_number(s, false).filter(|v| v.as_f64().is_some_and(|x| (0.0..=1000.0).contains(&x)))
+        }) && let Some(m) = v.as_f64()
+        {
+            out = Some(QuickAction::Margin(m));
+        }
+    }
+    ui.add_space(t.space_8);
+    ui.horizontal(|ui| {
+        if step == Quick::Top && crate::ui_kit::button(ui, solidcraft_ui_text::tr_label("Keep Z Up"), crate::ui_kit::Button::Normal).clicked() {
+            out = Some(QuickAction::KeepZ);
+        }
+        if crate::ui_kit::button(ui, solidcraft_ui_text::tr_label("Advanced…"), crate::ui_kit::Button::Normal)
+            .on_hover_text(solidcraft_ui_text::tr_label("The full setup form: each side of the stock, fixed sizes, round stock, the machine"))
+            .clicked()
+        {
+            out = Some(QuickAction::Advanced);
+        }
+    });
+    out
+}
+
+/// What the two-click panel asked for.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum QuickAction {
+    Margin(f64),
+    KeepZ,
+    Advanced,
+}
+
+/// Opens a plain command's form (Tool Kit, Set Machine) with these starting parameters.
+pub fn open_run(app: &mut SolveApp, command: &'static str, params: Value) {
+    app.cam_editor = Some(CamEditor::new(Target::Run(command), params));
+}
+
+/// Opens `id`'s own form, built from its parameters ([`crate::auto_form`]), with `prefill` and the
+/// selected bodies filled in. False when the command has no parameter schema to build it from.
+pub fn open_command(app: &mut SolveApp, id: &str, prefill: Value) -> bool {
+    let Some(spec) = solidcraft_engine::find_command(id) else { return false };
+    let Some(fields) = crate::auto_form::fields(id) else { return false };
+    let mut draft = match prefill {
+        Value::Object(m) => Value::Object(m),
+        _ => json!({}),
+    };
+    let selected: Vec<String> = app
+        .session
+        .selection
+        .iter()
+        .filter_map(|s| match s {
+            solidcraft_engine::Sel::Body { name } => Some(name.clone()),
+            _ => None,
+        })
+        .collect();
+    for f in &fields {
+        if draft.get(&f.key).is_some() {
+            continue;
+        }
+        match f.kind {
+            crate::auto_form::AutoKind::Body => {
+                if let Some(b) = selected.first() {
+                    draft[f.key.as_str()] = json!(b);
+                }
+            }
+            crate::auto_form::AutoKind::Bodies if !selected.is_empty() => draft[f.key.as_str()] = json!(selected),
+            _ => {}
+        }
+    }
+    let mut ed = CamEditor::new(Target::Command(spec.id), draft);
+    ed.auto = fields;
+    app.cam_editor = Some(ed);
+    true
+}
+
+/// The post a setup's program is written with when none is chosen: its machine's own, else
+/// the generic 3- or multi-axis one (as `cam.post` decides).
+fn default_post(st: &cam::setup::Setup) -> String {
+    if !st.machine.post.is_empty() {
+        st.machine.post.clone()
+    } else if st.machine.axis_count() > 3 {
+        "fiveaxis".into()
+    } else {
+        "generic".into()
+    }
+}
+
+/// Opens the Post form for `setup` (else the first setup): the post (the machine's own picked),
+/// the program name, line numbers and canned cycles. OK then asks where to save the file.
+pub fn open_post(app: &mut SolveApp, setup: Option<u64>) {
+    let m = &app.session.doc.manufacture;
+    let Some(st) = setup.and_then(|s| m.setup(s)).or_else(|| m.setups.first()) else {
+        app.set_status("Create a setup first: there is nothing to post.", true);
+        return;
+    };
+    let program = if st.program.is_empty() { st.name.clone() } else { st.program.clone() };
+    let params = json!({
+        "setup": st.id,
+        "post": default_post(st),
+        "program": program,
+        "line_numbers": 0,
+        "canned_cycles": true,
+    });
+    app.cam_editor = Some(CamEditor::new(Target::Run("cam.post"), params));
+}
+
+/// Post form OK: asks where to save, with the post's own extension (Mach3: .tap), then posts.
+fn post_to_file(app: &mut SolveApp, params: Value) {
+    let post_id = params["post"].as_str().unwrap_or("generic").to_string();
+    let ext = cam::post::Post::builtin(&post_id).map(|p| p.extension).unwrap_or_else(|| "nc".into());
+    let name: String = params["program"].as_str().unwrap_or("program").chars().filter(|c| !matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|')).collect();
+    let name = if name.trim().is_empty() { "program".to_string() } else { name };
+    let mut exts: Vec<&str> = vec!["tap", "nc", "gcode", "ngc", "cnc"];
+    exts.retain(|e| *e != ext);
+    exts.insert(0, ext.as_str());
+    app.pick_save_command(&format!("{name}.{ext}"), &exts, "cam.post", params);
+}
+
 /// Runs the set command with the draft; true when it was taken.
 pub fn apply(app: &mut SolveApp, ed: &mut CamEditor) -> bool {
     if ed.tab == Tab::Json {
@@ -266,29 +563,59 @@ pub fn apply(app: &mut SolveApp, ed: &mut CamEditor) -> bool {
         return false;
     }
     let (command, key, id) = ed.target.command();
-    params[key] = json!(id);
+    if !key.is_empty() {
+        params[key] = json!(id);
+    }
     if let Some(Value::Object(extra)) = ed.place.take() {
         for (k, v) in extra {
             params[k.as_str()] = v;
         }
     }
     if let Value::Object(m) = &mut params {
-        m.remove("id");
+        // A command's form: a parameter left empty takes the command's default.
+        if matches!(ed.target, Target::Command(_)) {
+            m.retain(|_, v| !v.is_null());
+            if let Some(f) = ed.auto.iter().find(|f| f.required && !m.contains_key(&f.key)) {
+                ed.message = Some((format!("Fill in {} first.", f.label), true));
+                return false;
+            }
+        } else {
+            m.remove("id");
+        }
+    }
+    // Post: the file comes next (the save window), and the post runs once it is chosen.
+    if command == "cam.post" {
+        post_to_file(app, params);
+        return true;
     }
     match app.run(command, params) {
         Ok(v) => {
-            // Added: from now on the editor edits the operation it made.
-            if let (Target::NewOperation(_), Some(id)) = (ed.target, v["id"].as_u64()) {
-                ed.target = Target::Operation(id);
+            // Added: from now on the editor edits the operation, tool or setup it made.
+            match (ed.target, v["id"].as_u64()) {
+                (Target::NewOperation(_), Some(id)) => ed.target = Target::Operation(id),
+                (Target::NewTool, Some(id)) => ed.target = Target::Tool(id),
+                (Target::NewSetup, Some(id)) => ed.target = Target::Setup(id),
+                _ => {}
             }
-            let warnings: Vec<String> =
+            let mut warnings: Vec<String> =
                 v["notice"]["issues"].as_array().into_iter().flatten().filter_map(|i| i["message"].as_str().map(str::to_string)).collect();
+            // A plain command says what it did (Tool Kit: the tools it added).
+            if let (Target::Run(_) | Target::Command(_), Some(info)) = (ed.target, v["notice"]["info"].as_str()) {
+                warnings.insert(0, info.to_string());
+            }
             if let Some(now) = saved(app, ed.target) {
                 ed.base = now.clone();
                 ed.set_draft(now);
             }
             ed.message = (!warnings.is_empty()).then(|| (warnings.join("\n"), false));
             true
+        }
+        // Repair Part on a part that is already good: good news, not an error.
+        Err(e) if e.contains("nothing to repair") => {
+            // Replaces the red notice the refusal left in the status bar.
+            app.set_status("Repair Part: the part is already good, nothing to repair.", false);
+            ed.message = Some((format!("{GOOD}Good news: this part has no gaps or holes, nothing to repair."), false));
+            false
         }
         Err(e) => {
             ed.message = Some((e, true));
@@ -297,12 +624,15 @@ pub fn apply(app: &mut SolveApp, ed: &mut CamEditor) -> bool {
     }
 }
 
+/// A form message that starts with this is good news, drawn in the success colour.
+const GOOD: &str = "✓ ";
+
 /// Draws the editor when it is open. Called once per frame.
 pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let Some(mut ed) = app.cam_editor.take() else { return };
     // Deleted (or undone away): nothing left to edit.
     let now = match ed.target {
-        Target::NewOperation(_) => ed.base.clone(),
+        target if target.unsaved() => ed.base.clone(),
         target => match saved(app, target) {
             Some(v) => v,
             None => return,
@@ -323,7 +653,17 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         (Some(n), Target::Operation(_)) => n.to_string(),
         (Some(n), Target::NewOperation(_)) => format!("New operation: {n}"),
         (Some(n), Target::Setup(_)) => format!("Setup: {n}"),
+        (Some(n), Target::NewTool) => format!("New tool: {n}"),
+        (Some(n), Target::NewSetup) => format!("New setup: {n}"),
+        (_, Target::Run(command)) => run_title(command).to_string(),
+        (_, Target::Command(command)) => {
+            solidcraft_engine::find_command(command).map_or_else(|| command.to_string(), |s| solidcraft_ui_text::tr_label(s.label).to_string())
+        }
         (None, _) => kind_label(ed.target.noun()),
+    };
+    let run_fields = match ed.target {
+        Target::Run(command) => run_choices(app, command),
+        _ => Vec::new(),
     };
     let uses = match ed.target {
         Target::Tool(id) => app.session.doc.manufacture.tool_uses(id),
@@ -339,12 +679,12 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     };
     let tools: Vec<(u64, String)> = app.session.doc.manufacture.tools.tools.iter().map(|tl| (tl.id, format!("T{} {}", tl.number, tl.name))).collect();
     let machines: Vec<(String, cam::machine::Machine)> = match ed.target {
-        Target::Setup(_) => solidcraft_engine::cmd::cam::known_machines(&app.session).into_iter().map(|e| (e.id, e.machine)).collect(),
+        Target::Setup(_) | Target::NewSetup => solidcraft_engine::cmd::cam::known_machines(&app.session).into_iter().map(|e| (e.id, e.machine)).collect(),
         _ => Vec::new(),
     };
     // Points the designer placed (construction points), for the setup's origin.
     let points: Vec<String> = match ed.target {
-        Target::Setup(_) => app
+        Target::Setup(_) | Target::NewSetup => app
             .session
             .model
             .state()
@@ -359,7 +699,14 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         Target::Operation(_) | Target::NewOperation(_) => selection_geometry(app, ed.draft["type"].as_str().unwrap_or("")),
         _ => None,
     };
+    // A command's form: its fields, and the design's bodies to pick from.
+    let ed_auto = ed.auto.clone();
+    let all_bodies: Vec<String> = match ed.target {
+        Target::Command(_) => app.session.model.state().bodies.iter().map(|b| b.name.clone()).collect(),
+        _ => Vec::new(),
+    };
     let (mut ok, mut apply_now, mut cancel, mut reload) = (false, false, false, false);
+    let mut quick_act: Option<QuickAction> = None;
     // The form scrolls within most of the window's height.
     let tall = (ctx.content_rect().height() * 0.72).max(320.0);
     // Held by its top edge: opening and folding sections grows and shrinks it downwards
@@ -374,18 +721,32 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         .keep_open_on_escape()
         .actions("OK", "Cancel", Some("Apply"))
         .show(ctx, can, |ui| {
-            // Tabs.
-            let mut tab = usize::from(ed.tab == Tab::Json);
-            // Room for both labels side by side (narrower, the kit turns segments into a dropdown).
-            let width = (t.space_24 * 10.0).min(ui.available_width());
-            ui.allocate_ui(egui::vec2(width, crate::ui_kit::row_height()), |ui| {
-                crate::ui_kit::segmented(ui, &mut tab, &["Fields", "JSON"], Default::default());
-            });
-            let want = if tab == 1 { Tab::Json } else { Tab::Fields };
-            if want != ed.tab {
-                switch(&mut ed, want);
+            // The two-click setup: what to click next, and nothing else.
+            if let Some(step) = ed.quick {
+                quick_act = quick_panel(ui, &mut ed, step);
+                if let Some((m, error)) = &ed.message {
+                    ui.label(RichText::new(m).color(if *error { t.error } else if m.starts_with(GOOD) { t.form_success } else { t.warning }));
+                }
+                return;
+            }
+            // Minimize folds the form down to this button and OK / Cancel, out of the way while
+            // zooming in on the model; Restore brings the fields back as they were.
+            let fold = if ed.minimized { "▼  Restore" } else { "▲  Minimize" };
+            let hint = if ed.minimized { "Show the form's fields again" } else { "Fold the form away to see more of the model" };
+            if crate::ui_kit::button(ui, solidcraft_ui_text::tr_label(fold), crate::ui_kit::Button::Normal)
+                .on_hover_text(solidcraft_ui_text::tr_label(hint))
+                .clicked()
+            {
+                ed.minimized = !ed.minimized;
+            }
+            if ed.minimized {
+                return;
             }
             ui.add_space(t.space_8);
+            // Fields only: the JSON tab (a typed call) is not shown; scripts take the call directly.
+            if ed.tab != Tab::Fields {
+                switch(&mut ed, Tab::Fields);
+            }
             if changed_elsewhere {
                 ui.horizontal(|ui| {
                     let text = format!("The {} changed elsewhere since you opened it.", ed.target.noun());
@@ -411,13 +772,22 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                                 }
                                 fields(ui, draft, inputs, &tools, None, picked.as_ref());
                             }
-                            Target::Tool(_) => tool_fields(ui, draft, inputs, uses),
+                            Target::Tool(_) | Target::NewTool => tool_fields(ui, draft, inputs, uses),
                             Target::Setup(id) => {
                                 if let Some(extra) = setup_fields(ui, draft, inputs, *id, &setups, origin, &points, &machines) {
                                     *place = Some(extra);
                                     apply_now = true;
                                 }
                             }
+                            // Not created yet: it comes after every setup there is.
+                            Target::NewSetup => {
+                                if let Some(extra) = setup_fields(ui, draft, inputs, u64::MAX, &setups, origin, &points, &machines) {
+                                    *place = Some(extra);
+                                    apply_now = true;
+                                }
+                            }
+                            Target::Run(_) => run_form(ui, draft, inputs, &setups, &run_fields),
+                            Target::Command(_) => auto_fields(ui, draft, inputs, &ed_auto, &all_bodies),
                         }
                     });
                 }
@@ -443,7 +813,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 ui.label(RichText::new(why).color(t.error));
             }
             if let Some((m, error)) = &ed.message {
-                ui.label(RichText::new(m).color(if *error { t.error } else { t.warning }));
+                ui.label(RichText::new(m).color(if *error { t.error } else if m.starts_with(GOOD) { t.form_success } else { t.warning }));
             }
         });
     match action {
@@ -457,6 +827,52 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         ed.base = now.clone();
         ed.set_draft(now);
         ed.message = None;
+    }
+    // The two-click setup's buttons and its top-face click.
+    if let (Some(a), Target::Setup(id)) = (quick_act, ed.target) {
+        match a {
+            QuickAction::Margin(m) => {
+                if let Err(e) = app.run("cam.setup.set", json!({"setup": id, "stock": margin_stock(m)})) {
+                    ed.message = Some((e, true));
+                }
+            }
+            QuickAction::KeepZ => {
+                ed.quick = Some(Quick::Zero);
+                ed.origin.picking = true;
+                ed.origin.before = None;
+                app.set_status("Click your zero: a corner, edge middle, face centre or hole of the model or the stock.".to_string(), false);
+            }
+            QuickAction::Advanced => {
+                ed.quick = None;
+                ed.origin.picking = false;
+                ed.minimized = false;
+            }
+        }
+    }
+    if ed.quick == Some(Quick::Top)
+        && let Target::Setup(id) = ed.target
+    {
+        let sel = app.session.selection.clone();
+        if ed.quick_before.as_ref() != Some(&sel) {
+            match sel.last() {
+                Some(face @ solidcraft_engine::Sel::Face { .. }) => {
+                    let up = crate::dialogs_assembly::snap_of(&app.session, face).and_then(|s| wcs_up(app, id, s.z));
+                    match up.map(|w| app.run("cam.setup.set", json!({"setup": id, "wcs": w}))) {
+                        Some(Ok(_)) => {
+                            ed.quick = Some(Quick::Zero);
+                            ed.origin.picking = true;
+                            ed.origin.before = None;
+                            let _ = app.session.execute("select.clear", &json!({}));
+                            app.set_status("Top set. Now click your zero: a corner, edge middle, face centre or hole of the model or the stock.".to_string(), false);
+                        }
+                        Some(Err(e)) => ed.message = Some((e, true)),
+                        None => ed.message = Some(("That face has no direction to stand the part on: click a flat face.".to_string(), true)),
+                    }
+                    ed.quick_before = Some(app.session.selection.clone());
+                }
+                _ => ed.quick_before = Some(sel),
+            }
+        }
     }
     // Picking the origin on the model: the click that changes the selection places it, at the
     // snap of what it picked (a coordinate).
@@ -489,8 +905,13 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         }
     }
     if ok || apply_now {
+        // The two-click setup's second click: once the zero is placed, it is done.
+        let zero_placed = ed.quick == Some(Quick::Zero) && ed.place.is_some();
         let taken = apply(app, &mut ed);
-        if ok && taken {
+        if (ok || zero_placed) && taken {
+            if zero_placed {
+                app.set_status("Setup ready: top and zero set. Add a tool and operations next.".to_string(), false);
+            }
             return;
         }
     }
@@ -816,7 +1237,8 @@ fn setup_fields(
         crate::ui_kit::row(ui, "Program", |ui| crate::ui_kit::text_field(ui, program, "the setup's name"));
     }
     // The stock, and where it comes from.
-    let here = setups.iter().position(|x| x.0 == id).unwrap_or(0);
+    // A setup not created yet comes after every one there is.
+    let here = setups.iter().position(|x| x.0 == id).unwrap_or(setups.len());
     if let Some(stock) = st.get_mut("stock") {
         section(ui, "Stock", true, |ui| {
             let modes = cam::ops::variants::<cam::setup::Stock>(json!({"mode": "\u{1}"}));
@@ -923,6 +1345,184 @@ fn setup_fields(
         }
     });
     flip
+}
+
+/// A plain command's form: the setup it is for (when it takes one), then a dropdown for each
+/// parameter with choices, then any other parameter as its own field.
+fn run_form(ui: &mut egui::Ui, draft: &mut Value, inputs: &mut Inputs, setups: &[(u64, String)], choices: &[(&'static str, &'static str, Vec<String>)]) {
+    let Value::Object(p) = draft else { return };
+    if let Some(current) = p.get("setup").and_then(Value::as_u64) {
+        let mut k = setups.iter().position(|x| x.0 == current).unwrap_or(0);
+        let names: Vec<&str> = setups.iter().map(|x| x.1.as_str()).collect();
+        crate::ui_kit::row(ui, "Setup", |ui| crate::ui_kit::dropdown(ui, "cam_ed_run_setup", &mut k, &names));
+        if let Some(x) = setups.get(k) {
+            p.insert("setup".into(), json!(x.0));
+        }
+    }
+    for (key, label, list) in choices {
+        let v = p.entry(key.to_string()).or_insert_with(|| json!(list.first().cloned().unwrap_or_default()));
+        value(ui, inputs, key, label, v, Some(list.as_slice()));
+    }
+    let rest: Vec<String> = p.keys().filter(|k| k.as_str() != "setup" && !choices.iter().any(|c| c.0 == k.as_str())).cloned().collect();
+    for key in rest {
+        if let Some(v) = p.get_mut(&key) {
+            let label = label_of(&key, v);
+            value(ui, inputs, &key, &label, v, None);
+        }
+    }
+}
+
+/// A command's form ([`Target::Command`]): one row per parameter, as [`crate::auto_form`] reads
+/// them. A parameter left empty is left out, so the command uses its default.
+fn auto_fields(ui: &mut egui::Ui, draft: &mut Value, inputs: &mut Inputs, fields: &[crate::auto_form::AutoField], bodies: &[String]) {
+    let t = Tokens::get();
+    let Value::Object(p) = draft else { return };
+    if fields.is_empty() {
+        ui.label(RichText::new(solidcraft_ui_text::tr_label("This command has nothing to set: press OK to run it.")).color(t.text_dim));
+    }
+    // What has to be answered, then everything else folded away under Advanced.
+    for f in fields.iter().filter(|f| f.required) {
+        auto_field(ui, p, inputs, f, bodies);
+    }
+    let optional: Vec<&crate::auto_form::AutoField> = fields.iter().filter(|f| !f.required).collect();
+    if !optional.is_empty() {
+        if fields.iter().all(|f| !f.required) {
+            ui.label(RichText::new(solidcraft_ui_text::tr_label("Nothing has to be set: press OK, or open Advanced.")).color(t.text_dim));
+        }
+        section(ui, "Advanced", false, |ui| {
+            for f in optional {
+                auto_field(ui, p, inputs, f, bodies);
+            }
+        });
+    }
+}
+
+/// One row of a command's form.
+fn auto_field(ui: &mut egui::Ui, p: &mut Map<String, Value>, inputs: &mut Inputs, f: &crate::auto_form::AutoField, bodies: &[String]) {
+    use crate::auto_form::AutoKind;
+    let t = Tokens::get();
+    {
+        let label = if f.required { format!("{} *", f.label) } else { f.label.clone() };
+        let key = f.key.as_str();
+        let hint = if f.required { "" } else { "default" };
+        match &f.kind {
+            AutoKind::Bool => {
+                let mut b = p.get(key).and_then(Value::as_bool).unwrap_or(false);
+                if crate::ui_kit::checkbox(ui, &label, &mut b).on_hover_text(&f.help).changed() {
+                    p.insert(key.into(), json!(b));
+                }
+            }
+            AutoKind::Integer | AutoKind::Number | AutoKind::Length => {
+                let shown = match p.get(key) {
+                    Some(Value::String(s)) => s.clone(),
+                    Some(v) if v.is_number() => number_text(v),
+                    _ => String::new(),
+                };
+                let integer = f.kind == AutoKind::Integer;
+                let length = f.kind == AutoKind::Length;
+                let got = typed(ui, inputs, key, &label, &shown, hint, |s| {
+                    let s = s.trim();
+                    if s.is_empty() {
+                        return Some(Value::Null);
+                    }
+                    parse_number(s, integer).or_else(|| length.then(|| json!(s)))
+                });
+                match got {
+                    Some(Value::Null) => {
+                        p.remove(key);
+                    }
+                    Some(v) => {
+                        p.insert(key.into(), v);
+                    }
+                    None => {}
+                }
+            }
+            AutoKind::Text => {
+                let shown = p.get(key).and_then(Value::as_str).unwrap_or("").to_string();
+                match typed(ui, inputs, key, &label, &shown, hint, |s| Some(if s.trim().is_empty() { Value::Null } else { json!(s) })) {
+                    Some(Value::Null) => {
+                        p.remove(key);
+                    }
+                    Some(v) => {
+                        p.insert(key.into(), v);
+                    }
+                    None => {}
+                }
+            }
+            AutoKind::Point => {
+                let shown = p.get(key).and_then(Value::as_array).map(|a| point_text(a)).unwrap_or_default();
+                match typed(ui, inputs, key, &label, &shown, if f.required { "x, y, z" } else { "default" }, parse_point) {
+                    Some(Value::Null) => {
+                        p.remove(key);
+                    }
+                    Some(v) => {
+                        p.insert(key.into(), v);
+                    }
+                    None => {}
+                }
+            }
+            AutoKind::Choice(list) => {
+                let _ = list_choice(ui, p, key, &label, list, f.required, false, &f.help);
+            }
+            AutoKind::Body if !bodies.is_empty() => {
+                let _ = list_choice(ui, p, key, &label, bodies, f.required, true, &f.help);
+            }
+            AutoKind::Body => {
+                ui.label(RichText::new(format!("{label}: there are no bodies to pick.")).color(t.error));
+            }
+            AutoKind::Bodies => {
+                let mut picked: Vec<String> =
+                    p.get(key).and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect()).unwrap_or_default();
+                let mut changed = false;
+                group(ui, &format!("{label} ({})", picked.len()), |ui| {
+                    for b in bodies {
+                        let mut on = picked.contains(b);
+                        if crate::ui_kit::checkbox(ui, b, &mut on).changed() {
+                            changed = true;
+                            if on {
+                                picked.push(b.clone());
+                            } else {
+                                picked.retain(|x| x != b);
+                            }
+                        }
+                    }
+                });
+                if changed {
+                    if picked.is_empty() {
+                        p.remove(key);
+                    } else {
+                        p.insert(key.into(), json!(picked));
+                    }
+                }
+            }
+            AutoKind::Other => {
+                ui.label(RichText::new(format!("{label}: set by picking in the model or the command's own tool.")).color(t.text_dim));
+            }
+        }
+    }
+}
+
+/// A dropdown of `list` (bodies or words); an optional one starts at "(default)", which leaves
+/// the parameter out.
+#[allow(clippy::too_many_arguments)]
+fn list_choice(ui: &mut egui::Ui, p: &mut Map<String, Value>, key: &str, label: &str, list: &[String], required: bool, names: bool, help: &str) -> bool {
+    let mut opts: Vec<String> = Vec::with_capacity(list.len() + 1);
+    if !required {
+        opts.push("(default)".into());
+    }
+    opts.extend(list.iter().cloned());
+    let current = p.get(key).and_then(Value::as_str);
+    let mut i = current.and_then(|c| opts.iter().position(|o| o == c)).unwrap_or(0);
+    let before = i;
+    let labels: Vec<String> = opts.iter().map(|o| if names || o.starts_with('(') { o.clone() } else { kind_label(o) }).collect();
+    let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+    crate::ui_kit::row(ui, label, |ui| crate::ui_kit::dropdown(ui, &format!("auto_form:{key}"), &mut i, &refs)).on_hover_text(help);
+    if !required && i == 0 {
+        p.remove(key);
+    } else if let Some(o) = opts.get(i) {
+        p.insert(key.into(), json!(o));
+    }
+    i != before
 }
 
 /// The sizes a tool kind starts with (a tool of `diameter` mm).
@@ -1269,7 +1869,18 @@ pub fn overlay(app: &mut SolveApp, painter: &egui::Painter, proj: &crate::viewpo
     let Some(mut ed) = app.cam_editor.take() else { return };
     let t = Tokens::get();
     let stock = match ed.target {
-        Target::Setup(id) if !ed.origin.hide_stock => solidcraft_engine::cmd::cam::setup_stock(&app.session, id),
+        Target::Setup(id) if !ed.origin.hide_stock => {
+            // Worked out again only when the design (its bodies, what is shown, the setups) changes.
+            let key = (id, app.session.design_revision());
+            match &ed.stock_cache {
+                Some((k, s)) if *k == key => *s,
+                _ => {
+                    let s = solidcraft_engine::cmd::cam::setup_stock(&app.session, id);
+                    ed.stock_cache = Some((key, s));
+                    s
+                }
+            }
+        }
         _ => None,
     };
     if let Some((shape, wcs)) = &stock {

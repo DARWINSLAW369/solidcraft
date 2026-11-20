@@ -18,7 +18,6 @@ use crate::{EngineError, Result, Session};
 
 pub static COMMANDS: &[CommandSpec] = &[CommandSpec::new("body.print_face", "Print Face", crate::checked!("body.print_face", print_face))
     .icon("print_face")
-    .key("Ctrl+B")
     .contract(&PRINT_FACE_CONTRACT)
     .output(crate::schema::output_schema_for::<PrintFaceResult>)
     .params("body: its name; point?: [x, y, z] on a flat face of it, in mm (omit to clear) → {body, face?}: marks the face a slicer export (file.send_to_slicer, file.save_mesh with slicer, file.open_in_easyprint), or an STL or 3MF export with lay_on_print_faces (file.export, file.export_stl, file.export_3mf, file.save_mesh), lays the body on: turned so the face points down at Z = 0, the centre of mass over the origin. One per body, replacing the last; flat faces of solid bodies only. A print face that is gone or no longer flat is reported in the export's warnings, and the body exported as it lies")];

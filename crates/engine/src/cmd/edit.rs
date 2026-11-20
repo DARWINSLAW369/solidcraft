@@ -38,6 +38,14 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&PALETTE_CONTRACT)
         .output(crate::schema::output_schema_for::<crate::schema::edit::PaletteResult>)
         .params("Open command search in the app. Headless calls are refused without changing the design"),
+    // The Keyboard Shortcuts page, from the ribbon (SolidCraft CAM).
+    CommandSpec::new("ui.shortcuts", "Keyboard Shortcuts", crate::checked!("ui.shortcuts", shortcuts))
+        .icon("settings_keyboard")
+        .noundo()
+        .doc_only()
+        .contract(&PALETTE_CONTRACT)
+        .output(crate::schema::output_schema_for::<crate::schema::edit::PaletteResult>)
+        .params("Open the Keyboard Shortcuts page in the app. Headless calls are refused without changing the design"),
     CommandSpec::new("ui.toggle_visibility", "Show/Hide Selection", crate::checked!("ui.toggle_visibility", toggle_visibility))
         .icon("eye")
         .key("V")
@@ -83,6 +91,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("timeline.compute_all", "Compute All", crate::checked!("timeline.compute_all", compute_all))
         .at("SOLID", "MODIFY")
         .icon("compute")
+        .key("Ctrl+B")
         .noundo()
         .contract(&COMPUTE_ALL_CONTRACT)
         .output(crate::schema::output_schema_for::<TimelineComputeAllResult>),
@@ -277,6 +286,10 @@ const PALETTE_CONTRACT: crate::schema::TypedContract<crate::schema::edit::Palett
 
 /// Command search (#12190) is the app's: it opens in `SolveApp::start`, and its key can be moved
 /// in Preferences › Shortcuts like any other command's.
+fn shortcuts(_s: &mut Session, _p: &Value) -> Result<Value> {
+    Err(EngineError::Other("ui.shortcuts opens the Keyboard Shortcuts page in the app; a headless session has none".into()))
+}
+
 fn palette(_s: &mut Session, _p: &Value) -> Result<Value> {
     Err(EngineError::Other("ui.palette opens command search in the app; there is no search box in a headless session".into()))
 }

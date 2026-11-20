@@ -156,16 +156,57 @@ pub fn groups(tab: &str, panel: &str) -> &'static [CommandGroup] {
             },
         ],
         ("MODEL", "MODIFY") => &[
-            CommandGroup { label: "Edges", ids: &["solid.fillet", "solid.chamfer"] },
-            CommandGroup {
-                label: "Faces",
-                ids: &["solid.press_pull", "solid.draft", "solid.offset_face", "solid.replace_face", "solid.split_face", "face.delete"],
-            },
-            CommandGroup { label: "Bodies", ids: &["solid.shell", "solid.combine", "solid.split_body", "solid.scale", "solid.remove"] },
-            CommandGroup { label: "Specialise", ids: &["sheet.convert"] },
+            CommandGroup { label: "Common", ids: MODEL_MODIFY_COMMON },
+            CommandGroup { label: "More face tools", ids: MODEL_MODIFY_FACES },
+            CommandGroup { label: "More body tools", ids: MODEL_MODIFY_BODIES },
+            CommandGroup { label: "Surface tools", ids: MODEL_MODIFY_SURFACE },
+            CommandGroup { label: "Sheet metal", ids: MODEL_MODIFY_SHEET },
+        ],
+        ("MODEL", "CREATE") => &[
+            CommandGroup { label: "Solid", ids: MODEL_CREATE_SOLID },
+            CommandGroup { label: "Quick shapes", ids: MODEL_CREATE_QUICK },
+            CommandGroup { label: "More solid tools", ids: MODEL_CREATE_MORE },
+            CommandGroup { label: "Surface tools", ids: MODEL_CREATE_SURFACE },
+            CommandGroup { label: "Sheet metal", ids: MODEL_CREATE_SHEET },
+            CommandGroup { label: "Plastic part", ids: MODEL_CREATE_PLASTIC },
+            CommandGroup { label: "Weld frame", ids: MODEL_CREATE_FRAME },
+        ],
+        ("MODEL", "ASSEMBLE") => &[
+            CommandGroup { label: "Joints", ids: MODEL_ASSEMBLE_JOINTS },
+            CommandGroup { label: "Components", ids: MODEL_ASSEMBLE_COMPONENTS },
+            CommandGroup { label: "Position", ids: MODEL_ASSEMBLE_POSITION },
+            CommandGroup { label: "Motion", ids: MODEL_ASSEMBLE_MOTION },
+            CommandGroup { label: "Contact", ids: MODEL_ASSEMBLE_CONTACT },
+        ],
+        ("MODEL", "INSERT") => &[
+            CommandGroup { label: "Files", ids: MODEL_INSERT_FILES },
+            CommandGroup { label: "Images", ids: MODEL_INSERT_IMAGES },
+            CommandGroup { label: "Part library", ids: MODEL_INSERT_LIBRARY },
+            CommandGroup { label: "Links", ids: MODEL_INSERT_LINKS },
+        ],
+        ("MODEL", "INSPECT") => &[
+            CommandGroup { label: "Measure", ids: MODEL_INSPECT_MEASURE },
+            CommandGroup { label: "Check", ids: MODEL_INSPECT_CHECK },
+            CommandGroup { label: "Surface quality", ids: MODEL_INSPECT_SURFACE },
+            CommandGroup { label: "History", ids: MODEL_INSPECT_HISTORY },
+            CommandGroup { label: "View", ids: MODEL_INSPECT_VIEW },
+        ],
+        ("MODEL", "CONFIGURE") => &[
+            CommandGroup { label: "Parameters", ids: MODEL_CONFIGURE_PARAMS },
+            CommandGroup { label: "Configurations", ids: MODEL_CONFIGURE_CONFIGS },
+            CommandGroup { label: "Material and units", ids: MODEL_CONFIGURE_LOOK },
+            CommandGroup { label: "Design", ids: MODEL_CONFIGURE_DESIGN },
+            CommandGroup { label: "Rules", ids: MODEL_CONFIGURE_RULES },
         ],
         _ => &[],
     }
+}
+
+/// Whether a drop-down heading starts folded (SolidCraft CAM): on Model, every heading after a
+/// menu's first is closed until clicked, so each menu shows its essentials first. Construct's
+/// three headings stay open.
+pub fn folds(tab: &str, panel: &str, heading: &str) -> bool {
+    tab == "MODEL" && panel != "CONSTRUCT" && groups(tab, panel).first().is_some_and(|g| g.label != heading)
 }
 
 /// Menu order is independent of the ribbon's promoted-button order.
@@ -208,27 +249,162 @@ const CONFIGURE: &[&str] = &["parameters.change", "config.table", "config.config
 /// points are moved with the triad that appears when one is clicked, not a Move button.
 pub const AGENT_ONLY: &[&str] = &["sketch.solve", "sketch.move3d"];
 
+/// One Model tab holds every design tool (SolidCraft CAM): the few used most are its buttons and
+/// the rest sit in each group's drop-down, under headings ([`groups`]), so nobody hunts through
+/// tabs. The other design tabs stay available from the tab row's + menu, hidden at first.
+const MODEL_CREATE_SOLID: &[&str] =
+    &["solid.extrude", "solid.revolve", "solid.hole", "solid.sweep", "solid.loft", "solid.pipe", "solid.coil", "solid.thread"];
+const MODEL_CREATE_QUICK: &[&str] = &["solid.box", "solid.cylinder", "solid.cone", "solid.sphere", "solid.torus"];
+const MODEL_CREATE_MORE: &[&str] = &["solid.rib", "solid.web", "solid.emboss", "solid.boundary_fill", "solid.bounding_solid"];
+// Surface Extrude, Revolve, Sweep, Loft and Offset are the Body type choice of Extrude, Revolve,
+// Sweep, Loft and Offset Face ([`MERGED_AWAY`]).
+const MODEL_CREATE_SURFACE: &[&str] = &["surface.boundary", "surface.patch", "surface.ruled", "surface.blend"];
+const MODEL_CREATE_SHEET: &[&str] = &["sheet.flange", "sheet.path_flange", "sheet.hem", "sheet.fold", "sheet.perforate"];
+const MODEL_CREATE_PLASTIC: &[&str] = &["plastic.boss", "plastic.lip", "plastic.snap_fit", "plastic.rest"];
+const MODEL_CREATE_FRAME: &[&str] = &["frame.member", "frame.end_cap"];
+const MODEL_MODIFY_COMMON: &[&str] =
+    &["solid.fillet", "solid.chamfer", "solid.shell", "solid.press_pull", "solid.draft", "solid.combine", "solid.split_body"];
+const MODEL_MODIFY_FACES: &[&str] = &["solid.offset_face", "solid.replace_face", "solid.split_face", "face.delete"];
+const MODEL_MODIFY_BODIES: &[&str] = &["solid.scale", "solid.remove", "timeline.delete"];
+const MODEL_MODIFY_SURFACE: &[&str] = &[
+    "surface.trim",
+    "surface.untrim",
+    "surface.extend",
+    "surface.stitch",
+    "surface.unstitch",
+    "surface.thicken",
+    "surface.reverse_normal",
+    "surface.fair",
+    "surface.match",
+    "mesh.convert",
+];
+
+/// Commands that are now a choice in another command's form (SolidCraft CAM), or not built yet:
+/// on no menu, so nothing appears twice.
+pub const MERGED_AWAY: &[&str] = &["surface.extrude", "surface.revolve", "surface.sweep", "surface.loft", "surface.offset", "surface.fillet"];
+const MODEL_MODIFY_SHEET: &[&str] = &["sheet.convert", "sheet.unfold", "sheet.refold", "sheet.flat_pattern", "sheet.export_dxf", "sheet.export_bend_table"];
+const MODEL_ASSEMBLE_COMPONENTS: &[&str] = &["component.create", "component.from_bodies", "component.insert_design"];
+const MODEL_ASSEMBLE_JOINTS: &[&str] = &[
+    "joint.create",
+    "joint.as_built",
+    "joint.origin",
+    "joint.rigid_group",
+    "assembly.constraint.create",
+    "joint.limits",
+    "joint.gear",
+    "joint.rack_pinion",
+    "joint.screw",
+    "joint.cam",
+    "joint.reach",
+];
+const MODEL_ASSEMBLE_POSITION: &[&str] = &["occurrence.move", "occurrence.ground", "component.capture_position", "component.revert_position"];
+const MODEL_ASSEMBLE_MOTION: &[&str] = &["joint.drive", "joint.motion_link", "motion.study", "motion.trace", "explode.create"];
+const MODEL_ASSEMBLE_CONTACT: &[&str] =
+    &["contact.enable_sets", "contact.check", "contact.enable_all", "contact.disable_all", "contact.create", "contact.edit", "contact.list"];
+const MODEL_INSERT_FILES: &[&str] = &["file.insert_step", "file.insert_mesh", "pointcloud.insert", "file.save_mesh", "file.send_to_slicer"];
+const MODEL_INSERT_IMAGES: &[&str] = &["canvas.insert", "canvas.decal", "canvas.edit"];
+const MODEL_INSERT_LIBRARY: &[&str] = &["parts.fastener", "parts.library", "parts.resize", "parts.insert"];
+const MODEL_INSERT_LINKS: &[&str] = &["component.update_links", "component.break_link"];
+const MODEL_INSPECT_MEASURE: &[&str] =
+    &["inspect.measure", "inspect.section", "inspect.center_of_mass", "component.properties", "assembly.bom", "inspect.colored_components"];
+const MODEL_INSPECT_CHECK: &[&str] = &["inspect.interference", "inspect.draft", "inspect.accessibility", "inspect.compare"];
+const MODEL_INSPECT_SURFACE: &[&str] = &[
+    "inspect.zebra",
+    "inspect.curvature_map",
+    "inspect.curvature_comb",
+    "inspect.isocurve",
+    "inspect.minimum_radius",
+    "inspect.environment_map",
+    "inspect.continuity",
+];
+const MODEL_INSPECT_HISTORY: &[&str] = &["timeline.play", "timeline.dependents", "document.inspect"];
+const MODEL_INSPECT_VIEW: &[&str] = &[
+    "view.apply",
+    "view.save",
+    "view.rename",
+    "view.delete",
+    "view.list",
+    "view.navigate",
+    "view.fit",
+    "view.home",
+    "view.tool",
+    "view.spin",
+    "view.visual_style",
+    "view.grid",
+    "view.ground_shadow",
+    "view.navigation_bar",
+    "view.ribbon_tabs_only",
+];
+const MODEL_CONFIGURE_PARAMS: &[&str] = &["parameters.change", "ui.shortcuts", "parameters.graph", "parameters.move", "parameters.import", "parameters.export"];
+const MODEL_CONFIGURE_CONFIGS: &[&str] = &["config.table", "config.configure", "config.rules", "config.preview"];
+const MODEL_CONFIGURE_LOOK: &[&str] =
+    &["material.assign", "appearance.assign", "document.units", "material.properties.validate", "library.inspect", "library.export", "library.apply"];
+const MODEL_CONFIGURE_DESIGN: &[&str] = &["timeline.compute_all", "edit.checkpoint", "edit.restore_checkpoint"];
+const MODEL_CONFIGURE_RULES: &[&str] = &["sheet.manage_rules", "plastic.manage_rules", "plastic.assign_rule"];
+
+/// Several lists as one, in order (for a section's `ids`).
+const fn joined<const N: usize>(lists: &[&[&'static str]]) -> [&'static str; N] {
+    let mut out = [""; N];
+    let (mut i, mut k) = (0, 0);
+    while i < lists.len() {
+        let mut j = 0;
+        while j < lists[i].len() {
+            out[k] = lists[i][j];
+            k += 1;
+            j += 1;
+        }
+        i += 1;
+    }
+    out
+}
+const fn total(lists: &[&[&'static str]]) -> usize {
+    let (mut i, mut n) = (0, 0);
+    while i < lists.len() {
+        n += lists[i].len();
+        i += 1;
+    }
+    n
+}
+const CREATE_LISTS: &[&[&str]] =
+    &[MODEL_CREATE_SOLID, MODEL_CREATE_QUICK, MODEL_CREATE_MORE, MODEL_CREATE_SURFACE, MODEL_CREATE_SHEET, MODEL_CREATE_PLASTIC, MODEL_CREATE_FRAME];
+const MODEL_CREATE: [&str; total(CREATE_LISTS)] = joined(CREATE_LISTS);
+const MODIFY_LISTS: &[&[&str]] = &[MODEL_MODIFY_COMMON, MODEL_MODIFY_FACES, MODEL_MODIFY_BODIES, MODEL_MODIFY_SURFACE, MODEL_MODIFY_SHEET];
+const MODEL_MODIFY: [&str; total(MODIFY_LISTS)] = joined(MODIFY_LISTS);
+// Joint and New Component are the group's two buttons; the rest follow in the drop-down.
+const ASSEMBLE_LISTS: &[&[&str]] = &[
+    &["joint.create", "component.create"],
+    MODEL_ASSEMBLE_JOINTS.split_at(1).1,
+    MODEL_ASSEMBLE_COMPONENTS.split_at(1).1,
+    MODEL_ASSEMBLE_POSITION,
+    MODEL_ASSEMBLE_MOTION,
+    MODEL_ASSEMBLE_CONTACT,
+];
+const MODEL_ASSEMBLE: [&str; total(ASSEMBLE_LISTS)] = joined(ASSEMBLE_LISTS);
+const INSERT_LISTS: &[&[&str]] = &[MODEL_INSERT_FILES, MODEL_INSERT_IMAGES, MODEL_INSERT_LIBRARY, MODEL_INSERT_LINKS];
+const MODEL_INSERT: [&str; total(INSERT_LISTS)] = joined(INSERT_LISTS);
+const INSPECT_LISTS: &[&[&str]] = &[MODEL_INSPECT_MEASURE, MODEL_INSPECT_CHECK, MODEL_INSPECT_SURFACE, MODEL_INSPECT_HISTORY, MODEL_INSPECT_VIEW];
+const MODEL_INSPECT: [&str; total(INSPECT_LISTS)] = joined(INSPECT_LISTS);
+const CONFIGURE_LISTS: &[&[&str]] = &[MODEL_CONFIGURE_PARAMS, MODEL_CONFIGURE_CONFIGS, MODEL_CONFIGURE_LOOK, MODEL_CONFIGURE_DESIGN, MODEL_CONFIGURE_RULES];
+const MODEL_CONFIGURE: [&str; total(CONFIGURE_LISTS)] = joined(CONFIGURE_LISTS);
+
 pub const SECTIONS: &[Section] = &[
     Section {
         tab: "MODEL",
         panel: "SKETCH",
         promoted: 1,
-        ids: &["sketch.create", "sketch.edit", "sketch.line3d", "sketch.arc3d", "sketch.spline3d", "sketch.point3d"],
+        ids: &["sketch.create", "sketch.edit", "sketch.line3d", "sketch.arc3d", "sketch.spline3d", "sketch.point3d", "sketch.insert_dxf", "sketch.insert_svg"],
     },
-    Section { tab: "MODEL", panel: "CREATE", promoted: 3, ids: &["solid.extrude", "solid.revolve", "solid.hole"] },
-    Section {
-        tab: "MODEL",
-        panel: "MODIFY",
-        promoted: 4,
-        ids: &["solid.fillet", "solid.chamfer", "solid.shell", "solid.press_pull", "sheet.convert"],
-    },
+    Section { tab: "MODEL", panel: "CREATE", promoted: 3, ids: &MODEL_CREATE },
+    Section { tab: "MODEL", panel: "MODIFY", promoted: 3, ids: &MODEL_MODIFY },
     Section {
         tab: "MODEL",
         panel: "ARRANGE",
         promoted: 3,
         ids: &["solid.move", "solid.mirror", "solid.pattern.rectangular", "solid.align", "solid.pattern.circular", "solid.pattern.path"],
     },
-    Section { tab: "MODEL", panel: "CONFIGURE", promoted: 2, ids: CONFIGURE },
+    Section { tab: "MODEL", panel: "ASSEMBLE", promoted: 2, ids: &MODEL_ASSEMBLE },
+    Section { tab: "MODEL", panel: "INSERT", promoted: 1, ids: &MODEL_INSERT },
+    Section { tab: "MODEL", panel: "INSPECT", promoted: 2, ids: &MODEL_INSPECT },
     // Plane, Axis and Point work out the method from the picks; the methods follow in the menu.
     Section {
         tab: "MODEL",
@@ -236,6 +412,9 @@ pub const SECTIONS: &[Section] = &[
         promoted: 3,
         ids: &["construct.plane", "construct.axis", "construct.point", "construct.plane.offset"],
     },
+    Section { tab: "MODEL", panel: "CONFIGURE", promoted: 2, ids: &MODEL_CONFIGURE },
+    // The selection filter (what a click picks), as the View tab had it.
+    Section { tab: "MODEL", panel: "SELECT", promoted: 0, ids: &[] },
     // Only while a linked design is edited in place, pinned at the right as FINISH SKETCH is.
     Section { tab: "MODEL", panel: "FINISH EDITING", promoted: 1, ids: &["component.finish_edit"] },
     // Sketches drive surfaces too: New Sketch leads the tab, as on MODEL and SHEET METAL.
@@ -559,6 +738,7 @@ const LEGACY_RENDER_SECTIONS: &[Section] = &[
 /// Compact source labels for painted big buttons only. Menus, search and tooltips
 /// retain the engine label. Route these through `tr_label`, like other UI labels.
 pub const RIBBON_LABELS: &[(&str, &str)] = &[
+    ("ui.shortcuts", "Shortcuts"),
     ("cam.operation.add", "Operation"),
     ("cam.operation.kinds", "Kinds"),
     ("cam.operation.steep_shallow", "Steep Shallow"),
@@ -665,27 +845,27 @@ pub const PLACEMENTS: &[(&str, &str, &str, &str)] = &[
     ("SOLID", "CREATE", "MODEL", "CREATE"),
     ("SOLID", "MODIFY", "MODEL", "MODIFY"),
     ("SOLID", "CONSTRUCT", "MODEL", "CONSTRUCT"),
-    ("SOLID", "ASSEMBLE", "ASSEMBLE", "JOINTS"),
-    ("SOLID", "POSITION", "ASSEMBLE", "POSITION"),
-    ("SOLID", "CONFIGURE", "MANAGE", "CONFIGURATIONS"),
-    ("SOLID", "INSPECT", "INSPECT", "CHECK"),
-    ("SOLID", "INSERT", "INSERT", "FILES"),
-    ("SURFACE", "CREATE", "SURFACE", "CREATE"),
-    ("SURFACE", "MODIFY", "SURFACE", "EDIT"),
-    ("SURFACE", "INSPECT", "INSPECT", "SURFACE QUALITY"),
+    ("SOLID", "ASSEMBLE", "MODEL", "ASSEMBLE"),
+    ("SOLID", "POSITION", "MODEL", "ASSEMBLE"),
+    ("SOLID", "CONFIGURE", "MODEL", "CONFIGURE"),
+    ("SOLID", "INSPECT", "MODEL", "INSPECT"),
+    ("SOLID", "INSERT", "MODEL", "INSERT"),
+    ("SURFACE", "CREATE", "MODEL", "CREATE"),
+    ("SURFACE", "MODIFY", "MODEL", "MODIFY"),
+    ("SURFACE", "INSPECT", "MODEL", "INSPECT"),
     ("SKETCH", "CREATE", "SKETCH", "CREATE"),
     ("SKETCH", "MODIFY", "SKETCH", "MODIFY"),
     ("SKETCH", "PATTERN", "SKETCH", "PATTERN"),
     ("SKETCH", "CONSTRAINTS", "SKETCH", "CONSTRAIN"),
-    ("SKETCH", "INSERT", "INSERT", "IMAGES"),
-    ("SKETCH", "INSPECT", "INSPECT", "SURFACE QUALITY"),
+    ("SKETCH", "INSERT", "MODEL", "INSERT"),
+    ("SKETCH", "INSPECT", "MODEL", "INSPECT"),
     ("SKETCH", "FINISH SKETCH", "SKETCH", "FINISH SKETCH"),
-    ("SHEET METAL", "CREATE", "SHEET METAL", "CREATE"),
-    ("SHEET METAL", "MODIFY", "SHEET METAL", "FLAT"),
-    ("WELDMENTS", "CREATE", "WELDMENTS", "CREATE"),
+    ("SHEET METAL", "CREATE", "MODEL", "CREATE"),
+    ("SHEET METAL", "MODIFY", "MODEL", "MODIFY"),
+    ("WELDMENTS", "CREATE", "MODEL", "CREATE"),
     ("PLASTIC", "CREATE", "MODEL", "CREATE"),
-    ("PLASTIC", "SETUP", "MANAGE", "RULES"),
-    ("MESH", "MODIFY", "INSERT", "FILES"),
+    ("PLASTIC", "SETUP", "MODEL", "CONFIGURE"),
+    ("MESH", "MODIFY", "MODEL", "INSERT"),
     ("RENDER", "SCENE", "RENDER CAMERA", "SHOTS"),
     ("RENDER", "IMAGE", "RENDER", "RENDER"),
     ("MANUFACTURE", "SETUP", "MANUFACTURE", "SETUP"),
@@ -713,10 +893,10 @@ pub fn destination(c: &CommandSpec) -> Option<(&'static str, &'static str)> {
 pub(crate) fn legacy_render_destination(c: &CommandSpec) -> Option<(&'static str, &'static str)> {
     // A few shared commands have a canonical home that differs from their first occurrence.
     let primary = match c.id {
-        "sheet.manage_rules" => Some(("MANAGE", "RULES")),
+        "sheet.manage_rules" => Some(("MODEL", "CONFIGURE")),
         "sheet.convert" => Some(("MODEL", "MODIFY")),
-        "parameters.change" => Some(("MANAGE", "PARAMETERS")),
-        "config.table" | "config.configure" => Some(("MANAGE", "CONFIGURATIONS")),
+        "parameters.change" => Some(("MODEL", "CONFIGURE")),
+        "config.table" | "config.configure" => Some(("MODEL", "CONFIGURE")),
         _ => None,
     };
     primary
@@ -729,7 +909,7 @@ pub(crate) fn legacy_render_destination(c: &CommandSpec) -> Option<(&'static str
 pub fn layout<'a>(tab: &str, panel: &str, specs: &[&'a CommandSpec]) -> Option<(Vec<&'a CommandSpec>, usize)> {
     let section = SECTIONS.iter().find(|s| s.tab == tab && s.panel == panel)?;
     let mut out: Vec<_> = section.ids.iter().filter_map(|id| specs.iter().find(|c| c.id == *id).copied()).collect();
-    for c in specs.iter().filter(|c| destination(c) == Some((section.tab, section.panel))) {
+    for c in specs.iter().filter(|c| destination(c) == Some((section.tab, section.panel)) && !MERGED_AWAY.contains(&c.id)) {
         if !out.iter().any(|o| o.id == c.id) {
             out.push(*c);
         }
@@ -841,12 +1021,30 @@ pub fn tab_icon(tab: &str) -> &'static str {
 /// Tabs shown by default, in row order. Sketch has its own visibility preference and the Render
 /// workspace owns its controls, so neither is on this list.
 pub fn choosable_tabs() -> impl Iterator<Item = &'static str> {
-    TABS.iter().copied().chain(SPECIALTY_TABS.iter().map(|o| o.tab))
+    // SolidCraft CAM: Surface, Assemble, Insert, Inspect, Manage and View only repeated Model's
+    // tools (all of which Model's drop-downs hold), so they are gone; Sheet Metal and Weldments
+    // keep their own tabs.
+    TABS.iter().copied().filter(|t| !REMOVED_TABS.contains(t)).chain(SPECIALTY_TABS.iter().map(|o| o.tab))
 }
 
-/// The person's choice. Every tab is on until explicitly hidden.
+/// Design tabs whose tools all live on Model now (SolidCraft CAM): never shown.
+pub const REMOVED_TABS: &[&str] = &["SURFACE", "ASSEMBLE", "INSERT", "INSPECT", "MANAGE", "VIEW"];
+
+/// Tabs that start hidden (SolidCraft CAM). The + menu turns each on (`shown_toolbar_tabs`); they
+/// also come up on their own while such a part is worked on.
+pub const HIDDEN_AT_FIRST: &[&str] = &["SHEET METAL", "WELDMENTS"];
+
+/// The person's choice. Model (and any tab not hidden at first) is on until explicitly hidden;
+/// a tab hidden at first is on once turned on.
 pub fn tab_turned_on(app: &crate::SolveApp, tab: &str) -> bool {
-    choosable_tabs().any(|t| t == tab) && !app.preferences.hidden_toolbar_tabs.iter().any(|t| t == tab)
+    if !choosable_tabs().any(|t| t == tab) {
+        return false;
+    }
+    if HIDDEN_AT_FIRST.contains(&tab) {
+        app.preferences.shown_toolbar_tabs.iter().any(|t| t == tab)
+    } else {
+        !app.preferences.hidden_toolbar_tabs.iter().any(|t| t == tab)
+    }
 }
 
 /// Show or hide a tab (kept with the preferences); names not on the list are left alone.
@@ -855,7 +1053,12 @@ pub fn set_tab_shown(app: &mut crate::SolveApp, tab: &str, shown: bool) {
         return;
     }
     app.preferences.hidden_toolbar_tabs.retain(|t| t != tab);
-    if !shown {
+    app.preferences.shown_toolbar_tabs.retain(|t| t != tab);
+    if HIDDEN_AT_FIRST.contains(&tab) {
+        if shown {
+            app.preferences.shown_toolbar_tabs.push(tab.to_string());
+        }
+    } else if !shown {
         app.preferences.hidden_toolbar_tabs.push(tab.to_string());
     }
 }
@@ -876,7 +1079,11 @@ pub fn visible_tabs(app: &crate::SolveApp) -> Vec<&'static str> {
     } else if app.session.active_sketch.is_some() {
         tabs.push("SKETCH");
     }
-    tabs.extend(SPECIALTY_TABS.iter().map(|o| o.tab).filter(|tab| tab_turned_on(app, tab)));
+    // Sheet Metal and Weldments come up while such a part is worked on, turned on or not.
+    let context = app.ui.ribbon_context.as_deref().unwrap_or("");
+    tabs.extend(SPECIALTY_TABS.iter().map(|o| o.tab).filter(|tab| {
+        tab_turned_on(app, tab) || (*tab == "SHEET METAL" && context.starts_with("sheet:")) || (*tab == "WELDMENTS" && context.starts_with("frame:"))
+    }));
     tabs
 }
 

@@ -19,6 +19,7 @@ pub mod bom_panel;
 pub mod browser;
 pub mod browser_canvas;
 pub mod browser_prompts;
+pub mod auto_form;
 pub mod cam_editor;
 pub mod cam_job;
 pub mod cam_panel;
@@ -1914,6 +1915,10 @@ impl SolveApp {
         // `logic`): build its hint in the user's language, not the thread default.
         let _language = solidcraft_ui_text::scope(&self.preferences.language);
         if solidcraft_engine::panels::commands::is_command(id) {
+            // One that needs parameters opens its form rather than failing for want of them.
+            if auto_form::needs_form(id) && cam_editor::open_command(self, id, json!({})) {
+                return;
+            }
             if let Err(why) = self.run(id, json!({})) {
                 self.set_status(why, true);
             }
@@ -1949,6 +1954,10 @@ impl SolveApp {
         }
         if id == "ui.palette" {
             shortcut_box::open(self, None);
+            return;
+        }
+        if id == "ui.shortcuts" {
+            self.keymap.open = true;
             return;
         }
         timeline::stop_playback(self);
@@ -2472,6 +2481,15 @@ impl SolveApp {
         if manufacture_workspace::start(self, id) {
             return;
         }
+        // Save View: the view on screen, saved at once (as the Browser's Named Views does), not a
+        // form asking for a camera. Renamed in the Browser.
+        if id == "view.save" {
+            match crate::browser::save_view(self, None) {
+                Some(name) => self.set_status(format!("Saved this view as \"{name}\" (Named Views in the Browser)."), false),
+                None => self.set_status("Couldn't save this view.".to_string(), true),
+            }
+            return;
+        }
         if let Some(mut d) = dialogs::Dialog::for_command(self, id) {
             if let Some(sketch) = finished_sketch {
                 d.take_sketch_profile(&self.session, sketch);
@@ -2496,6 +2514,11 @@ impl SolveApp {
         if id == "parts.resize" {
             dialogs_part_size::needs_a_part(self);
             self.restore_command_tab();
+            return;
+        }
+        // A command that needs parameters and has no dialog of its own opens a form built from
+        // them (the selected bodies filled in), never the command box.
+        if auto_form::needs_form(id) && cam_editor::open_command(self, id, json!({})) {
             return;
         }
         // The command either runs or starts nothing: a refusal (a missing parameter, nothing to
@@ -2653,8 +2676,11 @@ impl SolveApp {
             }
             None => {
                 dialogs::restore_editing(self, marker);
-                self.sbox.text = format!("timeline.edit {{\"feature\": {id}, \"set\": {{}}}}");
-                self.ui.palette_open = true;
+                // No editor for this kind of feature yet: say so, never a command box to type in.
+                self.set_status(
+                    "This feature has no edit form yet: delete it and add it again to change it, or change its numbers under Parameters.".to_string(),
+                    true,
+                );
             }
         }
     }

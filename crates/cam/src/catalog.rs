@@ -26,6 +26,7 @@ const BUILTIN: &[&str] = &[
     include_str!("../machines/makera-carvera.json"),
     include_str!("../machines/makera-carvera-air.json"),
     include_str!("../machines/makera-z1.json"),
+    include_str!("../machines/starmacnc-6060.json"),
 ];
 
 /// Caps on a file: it is read from anywhere an assistant or a person can put one.
@@ -329,7 +330,7 @@ mod tests {
             let f = MachineFile::parse(t).unwrap_or_else(|e| panic!("{e}: {}", &t[..t.len().min(80)]));
             assert!(f.entries().unwrap().iter().all(|e| !e.machine.name.is_empty()));
         }
-        assert_eq!(builtin().len(), 12, "the four generic machines, three Makera machines and their five options");
+        assert_eq!(builtin().len(), 14, "the four generic machines, three Makera machines, the STARMACNC 6060 and their six options");
     }
 
     #[test]
