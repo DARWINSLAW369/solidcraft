@@ -170,11 +170,41 @@ pub fn start(app: &mut SolveApp, id: &str) -> bool {
         // Already showing: the panel drives it.
         return true;
     }
-    match app.run(id, json!({})) {
+    // Simulate needs to know which setup (SolidCraft CAM): the one picked in the Browser (or the
+    // picked operation's), the only one there is, or, with several and none picked, a short form
+    // with the setups to pick from.
+    let mut params = json!({});
+    if matches!(id, "cam.simulate.show" | "cam.simulate") {
+        use crate::browser::cam::CamPick;
+        let m = &app.session.doc.manufacture;
+        let picked = match app.tree.picked_cam {
+            Some(CamPick::Setup(s)) => Some(s),
+            Some(CamPick::Operation(o)) => m.operation(o).map(|(st, _)| st.id),
+            _ => None,
+        }
+        .filter(|s| m.setup(*s).is_some());
+        match (picked, m.setups.as_slice()) {
+            (Some(s), _) => params = json!({"setup": s}),
+            (None, [only]) => params = json!({"setup": only.id}),
+            (None, [first, ..]) => {
+                let first = first.id;
+                if let Some(spec) = solidcraft_engine::find_command(id) {
+                    crate::cam_editor::open_run(app, spec.id, json!({"setup": first}));
+                }
+                return true;
+            }
+            (None, []) => {}
+        }
+    }
+    match app.run(id, params) {
         Ok(v) => {
             if let Some(info) = v.get("notice").and_then(|n| n.get("info")).and_then(Value::as_str) {
                 app.set_status(info.to_string(), v["notice"]["status"] == "error");
             }
+        }
+        // Not an error, just a step missing: said plainly.
+        Err(e) if e.contains("run cam.generate first") => {
+            app.set_status("Nothing to simulate yet: press Generate first, then Simulate.".to_string(), false)
         }
         Err(e) => app.set_status(e, true),
     }

@@ -115,6 +115,7 @@ fn run_title(command: &str) -> &'static str {
         "cam.tool.kit" => "Add Tool Kit",
         "cam.machine.set" => "Set Machine",
         "cam.post" => "Post Program",
+        "cam.simulate.show" | "cam.simulate" => "Simulate",
         _ => "Run Command",
     }
 }
