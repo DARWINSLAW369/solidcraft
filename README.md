@@ -9,7 +9,7 @@
 > - **A real tool library.** One shop library on your computer for every job. Import Fusion libraries (.tools, .json), tool lists or a spreadsheet. Any tool with a diameter comes in, even types with no 3D shape yet (taps, T-slots), as a plain cutter of that size. Tick the tools a job needs; edit them in that job, not in the library.
 > - **Also:** a Mach3 post, plasma cutting, imported Fusion STEP parts that all draw and import solid, and a keyboard-shortcut list with the used keys first.
 >
-> Everything here is offered back to jb69 and SolidCraft to take or leave.
+> Built on the work of jb69 (the CAM branch), the SolidCraft team, and HansFel ([SolidCraftCam](https://github.com/HansFel/SolidCraftCam), where the plasma cut order comes from). Everything here is offered back to all three to take or leave.
 
 <p align="center">
   <img src="assets/icons/app/linux/exports/hicolor/256x256/apps/io.tangencylabs.solidcraft.png" width="96" height="96" alt="SolidCraft" />
