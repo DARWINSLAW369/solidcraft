@@ -74,6 +74,10 @@ pub fn start(app: &mut SolveApp, id: &str) -> bool {
             crate::cam_editor::open_quick_setup(app, setup);
             return true;
         }
+        "cam.library" => {
+            crate::shop_library::open(app);
+            return true;
+        }
         "cam.tool.kit" => {
             let mut params = json!({"kit": "makera_essential", "material": "aluminium"});
             if let Some(s) = setup {

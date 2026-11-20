@@ -614,7 +614,12 @@ pub const SECTIONS: &[Section] = &[
     Section { tab: "WELDMENTS", panel: "SKETCH", promoted: 1, ids: &["sketch.create"] },
     Section { tab: "WELDMENTS", panel: "CREATE", promoted: 2, ids: &["frame.member", "frame.end_cap"] },
     Section { tab: "WELDMENTS", panel: "CONFIGURE", promoted: 2, ids: CONFIGURE },
-    Section { tab: "MANUFACTURE", panel: "SETUP", promoted: 4, ids: &["cam.setup.create", "cam.tool.add", "cam.tool.kit", "cam.machine.set"] },
+    Section {
+        tab: "MANUFACTURE",
+        panel: "SETUP",
+        promoted: 3,
+        ids: &["cam.setup.create", "cam.tool.add", "cam.library", "cam.tool.kit", "cam.machine.set"],
+    },
     Section {
         tab: "MANUFACTURE",
         panel: "2D MILLING",

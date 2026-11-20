@@ -542,6 +542,47 @@ fn every_operation_kind_has_a_command_and_the_new_kinds_cut() {
 }
 
 #[test]
+fn shop_library_imports_fusion_zip_and_adds_tools_to_the_design() {
+    let mut s = block();
+    let dir = std::env::temp_dir().join(format!("solidcraft-shop-test-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    // A Fusion .tools file: a zip around tools.json.
+    let fusion = r#"{"data": [
+        {"type": "flat end mill", "unit": "millimeters", "description": "6 mm flat", "geometry": {"DC": 6, "LCF": 18, "OAL": 50, "NOF": 3}, "post-process": {"number": 4}},
+        {"type": "drill", "unit": "inches", "description": "1/8 drill", "geometry": {"DC": 0.125, "SIG": 118, "LCF": 1, "OAL": 2}, "post-process": {"number": 4}},
+        {"type": "lollipop mill", "unit": "millimeters", "description": "lolly", "geometry": {"DC": 6}}
+    ]}"#;
+    let path = dir.join("Shop Mills.tools");
+    {
+        let mut z = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
+        z.start_file("tools.json", zip::write::SimpleFileOptions::default()).unwrap();
+        std::io::Write::write_all(&mut z, fusion.as_bytes()).unwrap();
+        z.finish().unwrap();
+    }
+    let r = run(&mut s, "cam.library.import", json!({"path": path.display().to_string()}));
+    assert_eq!(r["library"], "Shop Mills", "{r}");
+    assert_eq!(r["added"], 3, "{r}");
+    assert_eq!(r["plain"]["lollipop mill"], 1, "a plain cutter of its diameter: {r}");
+    // Again: nothing doubles up.
+    let again = run(&mut s, "cam.library.import", json!({"path": path.display().to_string()}));
+    assert_eq!(again["added"], 0, "{again}");
+    let list = run(&mut s, "cam.library.list", json!({}));
+    assert_eq!(list["tools"].as_array().unwrap().len(), 3, "{list}");
+    // Into the design: T4 kept, the second T4 moves up to T5.
+    let added = run(&mut s, "cam.library.add", json!({"indices": [0, 1]}));
+    let nums: Vec<u64> = added["tools"].as_array().unwrap().iter().map(|t| t["number"].as_u64().unwrap()).collect();
+    assert_eq!(nums, vec![4, 5], "{added}");
+    let d = added["tools"][1]["diameter"].as_f64().unwrap();
+    assert!((d - 3.175).abs() < 1e-9, "inches to mm: {d}");
+    // The design's tools back into the library under their own name, then removed again.
+    let saved = run(&mut s, "cam.library.save_design", json!({"library": "Starter"}));
+    assert_eq!(saved["added"], 2, "{saved}");
+    let gone = run(&mut s, "cam.library.remove", json!({"indices": [3, 4]}));
+    assert_eq!(gone["left"], 3, "{gone}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn plasma_cuts_holes_first_and_posts_torch_codes_for_mach3() {
     let mut s = block();
     let torch = run(

@@ -267,6 +267,17 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("cam.tool.set", "Edit Tool", tool_set).icon("cam").params("tool: id; any cam.tool.add field: changes a tool. Operations using it need cam.generate again"),
     CommandSpec::new("cam.tool.remove", "Remove Tool", tool_remove).icon("cam").params("tool: id: removes an unused tool"),
     CommandSpec::new("cam.tool.list", "Tools", tool_list).icon("cam").params("lists the tool library").noundo(),
+    CommandSpec::new("cam.library", "Tool Library", library_open).at("MANUFACTURE", "SETUP")
+        .icon("cam_tool_kit")
+        .params("in the app: opens the shop tool library (tools kept on this computer for every design: import Fusion .tools/.json, tool lists and spreadsheets, pick tools into the design). Scripts use cam.library.list / import / add / remove / save_design")
+        .noundo(),
+    CommandSpec::new("cam.library.list", "Shop Tools", library_list).icon("cam").params("lists the shop tool library: each tool with its index and library").noundo(),
+    CommandSpec::new("cam.library.import", "Import Tool Library", library_import).icon("cam")
+        .params("path: a Fusion tool library (.tools or .json), a tool list (.json: this program's, HansFel SolidCraftCam's) or a spreadsheet (.csv with a header row: name, kind, diameter, number?, flute_length?, overall_length?, shank_diameter?, flutes?, corner_radius?, tip_angle?); library?: its name in the shop library (default the file's name). Sizes only, no speeds or feeds; tools with no SolidCraft shape are left out and counted")
+        .noundo(),
+    CommandSpec::new("cam.library.add", "Add From Library", library_add).icon("cam").params("indices: shop library tools (cam.library.list): copies them into the design's tools, keeping each T number the design has free"),
+    CommandSpec::new("cam.library.remove", "Remove From Library", library_remove).icon("cam").params("indices: shop library tools to remove").noundo(),
+    CommandSpec::new("cam.library.save_design", "Save Tools To Library", library_save_design).icon("cam").params("library?: name (default My tools): copies the design's tools into the shop library").noundo(),
     CommandSpec::new("cam.setup.create", "Create Setup", setup_create).at("MANUFACTURE", "SETUP")
         .icon("cam_setup_create")
         .params("name?; bodies?: body names to machine (default all); fixtures?: body names to avoid; wcs?: {origin: [x,y,z], z: [x,y,z], x: [x,y,z]} in design coordinates (default the design's origin and axes); stock?: {mode: relative_box, x_neg, x_pos, y_neg, y_pos, z_neg, z_pos} | {mode: fixed_box, min, max} | {mode: relative_cylinder, axis: x|y|z, radial, start, end} | {mode: fixed_cylinder, axis, radius, start, end} | {mode: from_setup, setup?: id (default the setup before)}: what the earlier setup's operations left, for rest machining the other side (default a box 1 mm around the model, flush at the bottom, for the first setup; from_setup for every later one); flip?: x | y: the WCS of the setup before turned over about its x or y axis, the origin at the turned-over stock's front-left top corner (machining the bottom: every operation is measured from this origin); origin?: [x,y,z] | {point: construction point name}: the origin at this coordinate (design coordinates, axes kept; what picking a point on the model gives) or at a point the designer placed; origin_at?: {of: stock | model, x: left | center | right, y: front | center | back, z: top | middle | bottom} (default the stock's top front-left corner): the origin at that point of the stock's or the model's box, in the setup's axes; a fixed stock stays where it is; machine?: three_axis | four_axis_a | trunnion_ac | trunnion_bc | head_head_bc | carvera | carvera_4axis | carvera_air | carvera_air_4axis | z1 | z1_4axis or a machine object (cam.machine.list); program?: name for the post. Returns the setup with its id and the resolved stock"),
@@ -514,6 +525,192 @@ fn tool_remove(s: &mut Session, p: &Value) -> Result<Value> {
 fn tool_list(s: &mut Session, _p: &Value) -> Result<Value> {
     let m = &s.doc.manufacture;
     Ok(json!({"tools": m.tools.tools.iter().map(|t| tool_json(t, m.tool_uses(t.id))).collect::<Vec<_>>()}))
+}
+
+// ── The shop tool library: tools kept on the computer, shared by every design ──────────────
+
+/// The shop library's file: `SOLIDCRAFT_SHOP_TOOLS`, else `cam-shop-tools.json` in SolidCraft's
+/// per-user data folder (a test's own temporary folder under `cargo test`).
+fn shop_path() -> Option<std::path::PathBuf> {
+    if cfg!(test) {
+        return Some(std::env::temp_dir().join(format!("solidcraft-test-shop-tools-{}.json", std::process::id())));
+    }
+    if let Some(p) = std::env::var_os("SOLIDCRAFT_SHOP_TOOLS").filter(|p| !p.is_empty()) {
+        return Some(p.into());
+    }
+    Some(crate::recovery::data_dir()?.join("cam-shop-tools.json"))
+}
+
+fn shop_load(cmd: &str) -> Result<cam::library::ShopLibrary> {
+    let Some(path) = shop_path() else { return Ok(Default::default()) };
+    match std::fs::read_to_string(&path) {
+        Ok(text) => {
+            let mut lib: cam::library::ShopLibrary =
+                serde_json::from_str(&text).map_err(|e| bad(cmd, format!("the shop tool library {} cannot be read: {e}", path.display())))?;
+            // Libraries named before ".solidcraft-tools" was left off the file's name.
+            for t in &mut lib.tools {
+                if let Some(short) = t.library.strip_suffix(".solidcraft-tools") {
+                    t.library = short.to_string();
+                }
+            }
+            Ok(lib)
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Default::default()),
+        Err(e) => Err(bad(cmd, format!("{}: {e}", path.display()))),
+    }
+}
+
+fn shop_save(cmd: &str, lib: &cam::library::ShopLibrary) -> Result<()> {
+    let path = shop_path().ok_or_else(|| bad(cmd, "this computer has no folder for the shop tool library"))?;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| bad(cmd, format!("{}: {e}", dir.display())))?;
+    }
+    let text = serde_json::to_string_pretty(lib).map_err(|e| EngineError::Other(e.to_string()))?;
+    crate::io::write_atomic(&path, text.as_bytes(), true).map_err(|e| bad(cmd, format!("{}: {e}", path.display())))
+}
+
+fn shop_json(lib: &cam::library::ShopLibrary) -> Value {
+    let mut libraries: Vec<(String, usize)> = Vec::new();
+    for t in &lib.tools {
+        match libraries.iter_mut().find(|(n, _)| *n == t.library) {
+            Some((_, c)) => *c += 1,
+            None => libraries.push((t.library.clone(), 1)),
+        }
+    }
+    json!({
+        "path": shop_path().map(|p| p.display().to_string()),
+        "libraries": libraries.iter().map(|(n, c)| json!({"name": n, "tools": c})).collect::<Vec<_>>(),
+        "tools": lib.tools.iter().enumerate().map(|(i, t)| json!({"index": i, "library": t.library, "tool": t.tool})).collect::<Vec<_>>(),
+    })
+}
+
+fn library_list(_s: &mut Session, _p: &Value) -> Result<Value> {
+    Ok(shop_json(&shop_load("cam.library.list")?))
+}
+
+fn library_open(_s: &mut Session, _p: &Value) -> Result<Value> {
+    Ok(shop_json(&shop_load("cam.library")?))
+}
+
+/// The text of a tool file: a Fusion `.tools` file is a zip around `tools.json`.
+fn tool_file_text(cmd: &str, path: &str) -> Result<String> {
+    let meta = std::fs::metadata(path).map_err(|e| bad(cmd, format!("{path}: {e}")))?;
+    if meta.len() > 200 * 1024 * 1024 {
+        return Err(bad(cmd, format!("{path} is over 200 MB; a tool library is far smaller")));
+    }
+    let bytes = std::fs::read(path).map_err(|e| bad(cmd, format!("{path}: {e}")))?;
+    if bytes.starts_with(b"PK") {
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|e| bad(cmd, format!("{path}: not a tool library ({e})")))?;
+        let name = (0..zip.len())
+            .filter_map(|i| zip.by_index(i).ok().and_then(|f| f.name().ok().map(|n| n.to_string())))
+            .find(|n| n.to_ascii_lowercase().ends_with(".json"))
+            .ok_or_else(|| bad(cmd, format!("{path}: the zip holds no tools.json")))?;
+        let file = zip.by_name(&name).map_err(|e| bad(cmd, format!("{path}: {e}")))?;
+        let mut text = String::new();
+        use std::io::Read;
+        file.take(200 * 1024 * 1024).read_to_string(&mut text).map_err(|e| bad(cmd, format!("{path}: {e}")))?;
+        return Ok(text);
+    }
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+fn library_import(_s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "cam.library.import";
+    let path = str_(p, "path").filter(|s| !s.trim().is_empty()).ok_or_else(|| bad(cmd, "`path` (a .tools, .json or .csv file) is required"))?;
+    let text = tool_file_text(cmd, path)?;
+    let read = cam::library::read(&text).map_err(|e| bad(cmd, format!("{path}: {e}")))?;
+    let name = str_(p, "library")
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            // "SHOP-TOOLS.solidcraft-tools.json" is the library "SHOP-TOOLS".
+            std::path::Path::new(path).file_stem().map(|s| s.to_string_lossy().trim_end_matches(".solidcraft-tools").to_string())
+        })
+        .unwrap_or_else(|| "Imported".into());
+    let mut lib = shop_load(cmd)?;
+    let found = read.tools.len();
+    let added = lib.add(&name, read.tools);
+    shop_save(cmd, &lib)?;
+    let skipped: serde_json::Map<String, Value> = read.skipped.iter().map(|(k, n)| (k.clone(), json!(n))).collect();
+    let plain: serde_json::Map<String, Value> = read.plain.iter().map(|(k, n)| (k.clone(), json!(n))).collect();
+    let mut notice = Notice::new(format!("{added} tools added to the shop library as \"{name}\""));
+    if found > added {
+        notice.issue(Issue::info("already_there", format!("{} tools were already in \"{name}\"", found - added)));
+    }
+    if !plain.is_empty() {
+        let list: Vec<String> = read.plain.iter().map(|(k, n)| format!("{n} {k}")).collect();
+        notice.issue(Issue::info("plain_cutter", format!("read as plain cutters of their diameter (their type in the name): {}", list.join(", "))));
+    }
+    if !skipped.is_empty() {
+        let list: Vec<String> = read.skipped.iter().map(|(k, n)| format!("{n} {k}")).collect();
+        notice.issue(Issue::info("no_diameter", format!("left out, no diameter: {}", list.join(", "))));
+    }
+    Ok(json!({"library": name, "found": found, "added": added, "plain": plain, "skipped": skipped, "notice": notice.to_json()}))
+}
+
+fn indices(p: &Value, cmd: &str, len: usize) -> Result<Vec<usize>> {
+    let list = p.get("indices").and_then(Value::as_array).ok_or_else(|| bad(cmd, "`indices`: the library tools' numbers (cam.library.list)"))?;
+    let mut out: Vec<usize> = Vec::new();
+    for v in list {
+        let i = v.as_u64().map(|i| i as usize).filter(|i| *i < len).ok_or_else(|| bad(cmd, format!("no library tool {v}")))?;
+        if !out.contains(&i) {
+            out.push(i);
+        }
+    }
+    Ok(out)
+}
+
+fn library_add(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "cam.library.add";
+    let lib = shop_load(cmd)?;
+    let picked = indices(p, cmd, lib.tools.len())?;
+    if s.doc.manufacture.tools.tools.len() + picked.len() > 1000 {
+        return Err(bad(cmd, "a design holds at most 1000 tools"));
+    }
+    let mut out = Vec::new();
+    for i in picked {
+        let Some(entry) = lib.tools.get(i) else { continue };
+        let mut tool = entry.tool.clone();
+        tool.id = s.doc_mut().manufacture.next_id();
+        // The library's T number when the design has it free, else the next one up.
+        let used = |n: u32, s: &Session| s.doc.manufacture.tools.tools.iter().any(|t| t.number == n);
+        if tool.number == 0 || used(tool.number, s) {
+            tool.number = s.doc.manufacture.tools.tools.iter().map(|t| t.number).max().unwrap_or(0) + 1;
+        }
+        tool.validate().map_err(|e| engine_err(cmd, e))?;
+        out.push(tool_json(&tool, 0));
+        s.doc_mut().manufacture.tools.tools.push(tool);
+    }
+    Ok(json!({"tools": out}))
+}
+
+fn library_remove(_s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "cam.library.remove";
+    let mut lib = shop_load(cmd)?;
+    let mut picked = indices(p, cmd, lib.tools.len())?;
+    picked.sort_unstable_by(|a, b| b.cmp(a));
+    for i in &picked {
+        lib.tools.remove(*i);
+    }
+    shop_save(cmd, &lib)?;
+    Ok(json!({"removed": picked.len(), "left": lib.tools.len()}))
+}
+
+fn library_save_design(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "cam.library.save_design";
+    let name = str_(p, "library").map(str::trim).filter(|n| !n.is_empty()).unwrap_or("My tools").to_string();
+    let tools: Vec<Tool> = s.doc.manufacture.tools.tools.iter().cloned().map(|mut t| {
+        t.id = 1;
+        t
+    }).collect();
+    if tools.is_empty() {
+        return Err(bad(cmd, "this design has no tools to save"));
+    }
+    let mut lib = shop_load(cmd)?;
+    let added = lib.add(&name, tools);
+    shop_save(cmd, &lib)?;
+    Ok(json!({"library": name, "added": added, "notice": Notice::new(format!("{added} tools saved to the shop library as \"{name}\"")).to_json()}))
 }
 
 fn frame_param(p: &Value, k: &str, cmd: &str, default: Frame) -> Result<Frame> {

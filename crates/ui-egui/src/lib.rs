@@ -21,6 +21,7 @@ pub mod browser_canvas;
 pub mod browser_prompts;
 pub mod auto_form;
 pub mod cam_editor;
+pub mod shop_library;
 pub mod cam_job;
 pub mod cam_panel;
 pub mod canvas;
@@ -647,6 +648,8 @@ pub struct SolveApp {
     /// Toolpaths being generated off the window thread.
     /// The operation editor, when open.
     pub cam_editor: Option<cam_editor::CamEditor>,
+    /// The shop tool library window, when open.
+    pub shop_library: Option<shop_library::ShopWindow>,
     pub cam_job: Option<cam_job::CamJob>,
     pub tool: Option<tools::Tool>,
     pub dialog: Option<dialogs::Dialog>,
@@ -969,6 +972,7 @@ impl SolveApp {
             viewport: viewport::ViewportState::default(),
             render_workspace,
             cam_editor: None,
+            shop_library: None,
             cam_job: None,
             tool: None,
             dialog: None,
@@ -3828,6 +3832,7 @@ impl SolveApp {
         cam_job::poll(self, ui.ctx());
         cam_panel::show(self, ui.ctx());
         cam_editor::show(self, ui.ctx());
+        shop_library::show(self, ui.ctx());
         sketch_report::show(self, ui.ctx());
         material_card_review::show(self, ui.ctx());
         recovery_ui::show(self, ui.ctx());

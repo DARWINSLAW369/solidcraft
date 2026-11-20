@@ -1156,21 +1156,35 @@ fn tool_fields(ui: &mut egui::Ui, draft: &mut Value, inputs: &mut Inputs, uses: 
             value(ui, inputs, key, &label, v, None);
         }
     }
+    let kind_now = tl.get("kind").and_then(Value::as_str).unwrap_or("").to_string();
     section(ui, "Size", true, |ui| {
+        // A torch or a beam has no body: only its width matters (the kerf, the spot).
+        let beam = matches!(kind_now.as_str(), "plasma" | "laser");
+        let diameter_label = match kind_now.as_str() {
+            "plasma" => "Kerf width (mm)",
+            "laser" => "Spot size (mm)",
+            _ => "Diameter (mm)",
+        };
         for (key, label) in [
-            ("diameter", "Diameter (mm)"),
+            ("diameter", diameter_label),
             ("flute_length", "Flute length (mm)"),
             ("shank_diameter", "Shank diameter (mm)"),
             ("overall_length", "Stick-out (mm)"),
             ("holder_diameter", "Holder diameter (mm)"),
             ("flutes", "Flutes"),
         ] {
+            if beam && key != "diameter" {
+                continue;
+            }
             if let Some(v) = tl.get_mut(key) {
                 value(ui, inputs, key, label, v, None);
             }
         }
     });
-    if let Some(Value::Object(f)) = tl.get_mut("feeds") {
+    let beam = matches!(kind_now.as_str(), "plasma" | "laser");
+    if let Some(Value::Object(f)) = tl.get_mut("feeds")
+        && !beam
+    {
         section(ui, "Feeds and speeds", true, |ui| {
             let coolants = cam::ops::variants::<cam::tool::Coolant>(Value::Null);
             let keys: Vec<String> = f.keys().cloned().collect();

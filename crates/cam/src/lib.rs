@@ -30,6 +30,7 @@ pub mod dropcutter;
 pub mod frame;
 pub mod heightmap;
 pub mod kits;
+pub mod library;
 pub mod linking;
 pub mod load;
 pub mod machine;
