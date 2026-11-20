@@ -541,19 +541,39 @@ fn shop_path() -> Option<std::path::PathBuf> {
     Some(crate::recovery::data_dir()?.join("cam-shop-tools.json"))
 }
 
+/// Libraries named before ".solidcraft-tools" was left off the file's name.
+fn shop_tidy(mut lib: cam::library::ShopLibrary) -> cam::library::ShopLibrary {
+    for t in &mut lib.tools {
+        if let Some(short) = t.library.strip_suffix(".solidcraft-tools") {
+            t.library = short.to_string();
+        }
+    }
+    lib
+}
+
+/// In the browser there is no folder to keep the library in: it starts from the library
+/// bundled with the page (`apps/solidcraft-web/shop-tools.json`, built in) and changes stay
+/// in memory while the page is open.
+#[cfg(target_arch = "wasm32")]
+static WEB_SHOP: std::sync::Mutex<Option<cam::library::ShopLibrary>> = std::sync::Mutex::new(None);
+#[cfg(target_arch = "wasm32")]
+const WEB_SHOP_BUNDLED: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../apps/solidcraft-web/shop-tools.json"));
+
 fn shop_load(cmd: &str) -> Result<cam::library::ShopLibrary> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = cmd;
+        let mut held = WEB_SHOP.lock().unwrap_or_else(|e| e.into_inner());
+        let lib = held.get_or_insert_with(|| shop_tidy(serde_json::from_str(WEB_SHOP_BUNDLED).unwrap_or_default()));
+        return Ok(lib.clone());
+    }
+    #[allow(unreachable_code)]
     let Some(path) = shop_path() else { return Ok(Default::default()) };
     match std::fs::read_to_string(&path) {
         Ok(text) => {
-            let mut lib: cam::library::ShopLibrary =
+            let lib: cam::library::ShopLibrary =
                 serde_json::from_str(&text).map_err(|e| bad(cmd, format!("the shop tool library {} cannot be read: {e}", path.display())))?;
-            // Libraries named before ".solidcraft-tools" was left off the file's name.
-            for t in &mut lib.tools {
-                if let Some(short) = t.library.strip_suffix(".solidcraft-tools") {
-                    t.library = short.to_string();
-                }
-            }
-            Ok(lib)
+            Ok(shop_tidy(lib))
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Default::default()),
         Err(e) => Err(bad(cmd, format!("{}: {e}", path.display()))),
@@ -561,6 +581,13 @@ fn shop_load(cmd: &str) -> Result<cam::library::ShopLibrary> {
 }
 
 fn shop_save(cmd: &str, lib: &cam::library::ShopLibrary) -> Result<()> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = cmd;
+        *WEB_SHOP.lock().unwrap_or_else(|e| e.into_inner()) = Some(lib.clone());
+        return Ok(());
+    }
+    #[allow(unreachable_code)]
     let path = shop_path().ok_or_else(|| bad(cmd, "this computer has no folder for the shop tool library"))?;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| bad(cmd, format!("{}: {e}", dir.display())))?;
@@ -594,11 +621,8 @@ fn library_open(_s: &mut Session, _p: &Value) -> Result<Value> {
 
 /// The text of a tool file: a Fusion `.tools` file is a zip around `tools.json`.
 fn tool_file_text(cmd: &str, path: &str) -> Result<String> {
-    let meta = std::fs::metadata(path).map_err(|e| bad(cmd, format!("{path}: {e}")))?;
-    if meta.len() > 200 * 1024 * 1024 {
-        return Err(bad(cmd, format!("{path} is over 200 MB; a tool library is far smaller")));
-    }
-    let bytes = std::fs::read(path).map_err(|e| bad(cmd, format!("{path}: {e}")))?;
+    // Through the VFS, so the browser build reads the file it was handed too.
+    let bytes = solidcraft_io::vfs::read(path, 200 * 1024 * 1024).map_err(|e| bad(cmd, format!("{path}: {e}")))?;
     if bytes.starts_with(b"PK") {
         let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|e| bad(cmd, format!("{path}: not a tool library ({e})")))?;
         let name = (0..zip.len())
