@@ -1,3 +1,16 @@
+> ## This fork: SolidCraft CAM, the way a machinist uses it
+>
+> The work is on the [`solidcraft-cam-ui-2026-11-19`](https://github.com/DARWINSLAW369/solidcraft/tree/solidcraft-cam-ui-2026-11-19) branch, built on jb69's CAM branch of SolidCraft. The idea behind every change: **show only what you need to make the part, and leave out what gets decided at the machine anyway.**
+>
+> - **No duplicate commands.** One Extrude (Solid or Surface), one Revolve, one Loft. Each tool group shows its main buttons; the rest sit under a folded heading.
+> - **No typing commands.** Every button opens a form or a pick in the model. Only the fields you must answer show up; everything else is behind "Advanced".
+> - **Setup is two clicks.** Click the face that faces up, then click your zero (a corner of the part or of the stock). That point is what you touch off at the machine. G54 or G55 is just which slot holds it, set at the control.
+> - **A tool is a number and a diameter.** That's all the post and the machine need. Tool lengths are set on the machine, and speeds and feeds are tuned at the machine for your own spindle and material, so no tool comes with presets.
+> - **A real tool library.** One shop library on your computer for every job. Import Fusion libraries (.tools, .json), tool lists or a spreadsheet. Any tool with a diameter comes in, even types with no 3D shape yet (taps, T-slots), as a plain cutter of that size. Tick the tools a job needs; edit them in that job, not in the library.
+> - **Also:** a Mach3 post, plasma cutting, imported Fusion STEP parts that all draw and import solid, and a keyboard-shortcut list with the used keys first.
+>
+> Everything here is offered back to jb69 and SolidCraft to take or leave.
+
 <p align="center">
   <img src="assets/icons/app/linux/exports/hicolor/256x256/apps/io.tangencylabs.solidcraft.png" width="96" height="96" alt="SolidCraft" />
 </p>
