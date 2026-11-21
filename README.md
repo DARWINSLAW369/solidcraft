@@ -1,6 +1,6 @@
 > ## This fork: SolidCraft CAM, the way a machinist uses it
 >
-> **[Download for Windows (latest release)](https://github.com/DARWINSLAW369/solidcraft/releases/latest)** Â· **[How to use it, with pictures](docs/cam-how-to)**
+> **[How to use it, with pictures](docs/cam-how-to)**. To try it, build it from this branch (`cargo build --release -p solidcraft --bin solidcraft`). There's no ready-made download: SolidCraft's name and look are under its Brand and Interface Licence ([LICENSE-BRAND](LICENSE-BRAND)), so builds are shared only with the SolidCraft maintainers' OK.
 >
 > This branch (`main`) holds this fork's own build, version 19. It's built on jb69's CAM branch of SolidCraft. The idea behind every change: **work with what you can see, show only what you need to make the part, and leave out what gets decided at the machine anyway.**
 >
@@ -10,7 +10,7 @@
 > - **Toolpaths stay current.** They're made as soon as an operation is added, and remade when a tool or operation changes.
 > - **No presets.** A tool is a number and a shape. Speeds and feeds are yours to set, and tool lengths are set at the machine.
 > - **A real tool library.** One shop library for every job. Import Fusion libraries (.tools, .json), tool lists or spreadsheets. Tool kinds include T-slot, dovetail, lollipop, tap, thread mill, reamer, boring bar, corner rounding and engraver, with real shapes in the simulation.
-> - **Your words.** Preferences â€º Names: Shop (Pocket, Profile, Depth of Cut, Safe Z), Fusion, or SolidCraft wording.
+> - **Your words.** Preferences › Names: Shop (Pocket, Profile, Depth of Cut, Safe Z), Fusion, or SolidCraft wording.
 > - **STL to solid.** Mesh to Solid repairs an STL first (duplicate triangles, holes, inside out), then makes it a solid. Big curvy meshes can be cut as they are with the 3D operations.
 > - **Also:** a Mach3 post with manual tool changes and G83 pecking, plasma cutting, no duplicate commands, forms instead of typed commands, and Fusion STEP parts that import solid.
 >
