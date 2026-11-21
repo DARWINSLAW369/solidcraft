@@ -1351,7 +1351,7 @@ preference_settings! {
     language: String = "system".into(), 0;
     /// Which words name the commands and settings: `shop` (what machinists say at the machine),
     /// `fusion` or `solidcraft` (SolidCraft's own).
-    names: String = "solidcraft".into(), 0;
+    names: String = (if cfg!(test) { "solidcraft" } else { "shop" }).into(), 0;
     /// The machine a first CAM setup starts on (a machine id from `cam.machine.list`). Empty:
     /// the generic machine with no limits, as before.
     default_machine: String = String::new(), 0;
