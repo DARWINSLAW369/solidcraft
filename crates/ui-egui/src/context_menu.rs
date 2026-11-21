@@ -3774,16 +3774,14 @@ mod manufacture_tests {
             let spec = solidcraft_engine::find_command(id).unwrap();
             assert_eq!(crate::workspace::destination(spec).map(|(t, _)| t), Some("MANUFACTURE"), "{id}");
         }
-        // A tool button opens the command box filled in rather than running with nothing.
-        h.app.start("cam.tool.add");
-        assert!(h.app.ui.palette_open);
-        assert!(h.app.sbox.text.starts_with("cam.tool.add {"));
-        h.app.ui.palette_open = false;
-        h.app.start("cam.operation.slot");
-        assert!(h.app.sbox.text.starts_with("cam.operation.slot {") && h.app.sbox.text.contains("\"width\""), "{}", h.app.sbox.text);
-        h.app.start("cam.operation.tap");
-        assert!(h.app.sbox.text.contains("\"cycle\":\"tap\"") && h.app.sbox.text.contains("\"pitch\""), "{}", h.app.sbox.text);
-        h.app.ui.palette_open = false;
+        // A button opens its form (or its click panel), never the command box.
+        for id in ["cam.tool.add", "cam.operation.slot", "cam.operation.tap"] {
+            h.app.cam_editor = None;
+            h.app.start(id);
+            assert!(!h.app.ui.palette_open, "{id} opens no command box");
+            assert!(h.app.cam_editor.is_some(), "{id} opens its form");
+        }
+        h.app.cam_editor = None;
         // A simulation shown by a script marks the workspace current; leaving ends it.
         let tool = h.app.run("cam.tool.add", json!({"name": "6 mm flat", "kind": "flat", "diameter": 6})).unwrap()["id"].clone();
         let setup = h.app.run("cam.setup.create", json!({})).unwrap()["id"].clone();

@@ -867,11 +867,15 @@ fn slot(op: &Operation, ctx: &Context, width: f64, stepdown: f64, direction: Dir
 
 fn engrave(op: &Operation, ctx: &Context, width: f64, stepdown: f64) -> Result<(Toolpath, Notice)> {
     let tool = ctx.tool;
-    let half = match tool.kind {
+    // The cone's half angle, and the flat tip's half width (an engraving cutter's).
+    let (half, tip_r) = match tool.kind {
         crate::tool::ToolKind::Chamfer { tip_angle_deg } | crate::tool::ToolKind::SpotDrill { tip_angle_deg } => {
-            Some((tip_angle_deg.clamp(1.0, 179.0) * 0.5).to_radians())
+            (Some((tip_angle_deg.clamp(1.0, 179.0) * 0.5).to_radians()), 0.0)
         }
-        _ => None,
+        crate::tool::ToolKind::Engraver { tip_angle_deg, tip_diameter } => {
+            (Some((tip_angle_deg.clamp(1.0, 179.0) * 0.5).to_radians()), tip_diameter * 0.5)
+        }
+        _ => (None, 0.0),
     };
     let mut lk = linker(op, ctx);
     let mut bottom = ctx.heights.bottom + ctx.stock_to_leave_axial;
@@ -882,7 +886,7 @@ fn engrave(op: &Operation, ctx: &Context, width: f64, stepdown: f64) -> Result<(
     match half {
         Some(h) if width > 0.0 => {
             // The groove's width at the surface sets the tip depth.
-            let depth = (width * 0.5) / h.tan();
+            let depth = (width * 0.5 - tip_r).max(0.0) / h.tan();
             bottom = surface - depth;
             lk.heights.bottom = bottom;
             lk.heights.top = surface;

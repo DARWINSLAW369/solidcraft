@@ -276,6 +276,15 @@ pub enum Geometry {
     /// Planar faces picked by a point on each (the engine resolves them): their outer loops and
     /// holes, and their height.
     Faces { points: Vec<Vec3> },
+    /// Walls or edges picked by a point on each: the level face each wall stands on (its floor,
+    /// found along the wall's lowest edges) gives the outline and the depth, as if the floor had
+    /// been picked. A level face picked here is taken as the floor itself.
+    Walls { points: Vec<Vec3> },
+    /// A wall picked by a point on it (swarf): its bottom edges and its top edges become the
+    /// two chains.
+    SwarfWall { point: Vec3 },
+    /// Two edges picked by a point on each (flow, morph): they become the two rails.
+    RailEdges { points: Vec<Vec3> },
     /// Holes: the cylindrical faces picked by a point on each (drilling), or explicit points.
     Holes {
         #[serde(default)]

@@ -121,8 +121,20 @@ fn run_title(command: &str) -> &'static str {
 }
 
 /// A tool kind's own sizes, beside the sizes every tool has.
-const TOOL_KIND_KEYS: &[&str] =
-    &["corner_radius", "tip_angle_deg", "wavelength_nm", "tip_radius", "taper_angle_deg", "pierce_height", "cut_height", "pierce_delay_s"];
+const TOOL_KIND_KEYS: &[&str] = &[
+    "corner_radius",
+    "tip_angle_deg",
+    "wavelength_nm",
+    "tip_radius",
+    "taper_angle_deg",
+    "pierce_height",
+    "cut_height",
+    "pierce_delay_s",
+    "angle_deg",
+    "pitch",
+    "round_radius",
+    "tip_diameter",
+];
 
 /// The five heights, in the order they are met going down.
 const HEIGHTS: [(&str, &str); 5] = [("clearance", "Clearance"), ("retract", "Retract"), ("feed", "Feed"), ("top", "Top"), ("bottom", "Bottom")];
@@ -158,6 +170,117 @@ pub struct CamEditor {
     /// The setup's stock as last worked out, by (setup, design revision): working it out meshes
     /// every body of the setup (seconds on a big assembly), too slow for every frame.
     stock_cache: Option<((u64, u64), Option<(cam::setup::StockShape, cam::frame::Frame)>)>,
+    /// Where the operation's Tool box takes its tools from: 0 the job's own, else a shop
+    /// library (1 the first one listed).
+    tool_from: usize,
+    /// The shop library as `cam.library.list` gave it when the form opened.
+    shop: Option<Value>,
+    /// A shop library tool picked in the Tool box (its library index), copied into the job after
+    /// the form is drawn.
+    shop_pick: Option<usize>,
+    /// A new operation made by clicking on the model (what to click, and what was clicked), the
+    /// full form behind Adjust. `None`: the form.
+    pub pick: Option<OpPick>,
+}
+
+/// What a click on the model picks for a new operation, in the words of what is seen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PickWhat {
+    /// A level face: a pocket's floor, the top to face off.
+    Floor,
+    /// A wall or the edge along its top: the floor it stands on gives the outline and the depth.
+    Walls,
+    /// Holes, one click each.
+    Holes,
+    /// Faces to machine (3D), one click each.
+    Faces,
+    /// A sketch's shape.
+    Sketch,
+    /// One wall, its bottom and top edges the swarf chains.
+    SwarfWall,
+    /// Two edges, the rails of a flow or morph.
+    Rails,
+    /// Nothing to click: the operation works on the whole part (Go).
+    Nothing,
+}
+
+/// Picking a new operation's geometry on the model.
+pub struct OpPick {
+    pub what: PickWhat,
+    /// The selection when picking began or last changed, so the click that changes it is the one.
+    before: Option<Vec<solidcraft_engine::Sel>>,
+    /// The points clicked so far (holes and faces take several).
+    points: Vec<Value>,
+    /// A sketch clicked (its feature id).
+    sketch: Option<u64>,
+}
+
+/// What can be clicked for an operation of kind `ty` (the first is asked for first), and the
+/// button that takes the whole part or stock without a click. Empty: the form only.
+fn pick_choices(ty: &str) -> (&'static [PickWhat], Option<&'static str>) {
+    match ty {
+        "face" => (&[PickWhat::Floor], Some("Whole Stock Top")),
+        "pocket2d" | "adaptive2d" => (&[PickWhat::Floor, PickWhat::Walls], None),
+        "contour2d" => (&[PickWhat::Walls, PickWhat::Floor], None),
+        "chamfer2d" => (&[PickWhat::Walls], None),
+        "slot" | "trace" | "engrave" | "laser_cut" | "laser_engrave" | "plasma_cut" => (&[PickWhat::Sketch], None),
+        "drill" | "bore" | "circular" | "thread" => (&[PickWhat::Holes], None),
+        "pocket3d" | "adaptive3d" | "parallel" | "contour3d" | "scallop" | "pencil" | "spiral" | "radial" | "morphed_spiral" | "project"
+        | "horizontal" | "steep_shallow" | "multi_axis_contour" => (&[PickWhat::Faces], Some("Whole Part")),
+        "swarf" => (&[PickWhat::SwarfWall], None),
+        "flow" | "morph" => (&[PickWhat::Rails], None),
+        "rotary" | "turn_face" | "turn_profile" | "turn_groove" | "turn_thread" => (&[PickWhat::Nothing], Some("Go")),
+        _ => (&[], None),
+    }
+}
+
+/// The line that says what to click.
+fn pick_line(ty: &str, what: PickWhat) -> &'static str {
+    match (what, ty) {
+        (PickWhat::Floor, "face") => "Click the top face of the part, or take the whole stock top.",
+        (PickWhat::Floor, "contour2d") => "Click the face the part stands on: its outline is cut.",
+        (PickWhat::Floor, _) => "Click the floor of the pocket.",
+        (PickWhat::Walls, "chamfer2d") => "Click the edge to chamfer (or the wall under it).",
+        (PickWhat::Walls, "contour2d") => "Click a wall of the part, or the edge along its top.",
+        (PickWhat::Walls, _) => "Click a wall of the pocket, or the edge along its top.",
+        (PickWhat::Holes, _) => "Click each hole, then Done.",
+        (PickWhat::Faces, _) => "Click the faces to machine, then Done, or take the whole part.",
+        (PickWhat::Sketch, _) => "Click the sketch shape to cut.",
+        (PickWhat::SwarfWall, _) => "Click the wall: the side of the tool runs along it, bottom edge to top edge.",
+        (PickWhat::Rails, _) => "Click two edges: the passes run between them.",
+        (PickWhat::Nothing, "turn_groove") => "Works on the whole part: pick the tool and Go, or Adjust to set where the groove goes.",
+        (PickWhat::Nothing, "turn_thread") => "Works on the whole part: pick the tool and Go, or Adjust to set the pitch and length.",
+        (PickWhat::Nothing, _) => "Works on the whole part: pick the tool and Go.",
+    }
+}
+
+/// The button that switches to picking `what` instead.
+fn pick_switch_label(what: PickWhat) -> &'static str {
+    match what {
+        PickWhat::Floor => "Pick the Floor Instead",
+        PickWhat::Walls => "Pick a Wall or Edge Instead",
+        PickWhat::Holes => "Pick Holes",
+        PickWhat::Faces => "Pick Faces",
+        PickWhat::Sketch => "Pick a Sketch",
+        PickWhat::SwarfWall => "Pick a Wall",
+        PickWhat::Rails => "Pick Two Edges",
+        PickWhat::Nothing => "Whole Part",
+    }
+}
+
+/// Whether `what` takes several clicks (then Done).
+fn pick_many(what: PickWhat) -> bool {
+    matches!(what, PickWhat::Holes | PickWhat::Faces)
+}
+
+/// What the pick panel asked for.
+#[derive(Clone, Debug, PartialEq)]
+enum PickAction {
+    Switch(PickWhat),
+    Whole,
+    Done,
+    UseSelected,
+    Adjust,
 }
 
 /// The two clicks that set a setup up: the face that faces up, then the zero point.
@@ -213,6 +336,10 @@ impl CamEditor {
             quick: None,
             quick_before: None,
             stock_cache: None,
+            tool_from: 0,
+            shop: None,
+            shop_pick: None,
+            pick: None,
         }
     }
 
@@ -310,7 +437,16 @@ pub fn open_new(app: &mut SolveApp, setup: u64, kind: &str, call: &Value) -> boo
     if let Value::Object(m) = &mut full {
         m.remove("id");
     }
-    app.cam_editor = Some(CamEditor::new(Target::NewOperation(setup), full));
+    let mut ed = CamEditor::new(Target::NewOperation(setup), full);
+    // Click on the model first, the form behind Adjust; something already selected fills the
+    // form instead (picked before the operation was asked for).
+    if let Some(first) = pick_choices(kind).0.first()
+        && selection_geometry(app, kind).is_none()
+    {
+        ed.pick = Some(OpPick { what: *first, before: Some(app.session.selection.clone()), points: Vec::new(), sketch: None });
+        app.set_status(solidcraft_ui_text::tr_label(pick_line(kind, *first)).to_string(), false);
+    }
+    app.cam_editor = Some(ed);
     true
 }
 
@@ -450,6 +586,235 @@ fn quick_panel(ui: &mut egui::Ui, ed: &mut CamEditor, step: Quick) -> Option<Qui
     out
 }
 
+/// A new operation's click panel: what to click, the tool, the other things it can pick, and
+/// Adjust for the full form. Returns what was pressed.
+fn pick_panel(
+    ui: &mut egui::Ui,
+    pick: &OpPick,
+    draft: &mut Value,
+    inputs: &mut Inputs,
+    hover: Option<crate::toolbar::HoverShape>,
+    tools: &[(u64, String)],
+    from: &mut ToolFrom,
+    selected: Option<&str>,
+) -> Option<PickAction> {
+    let t = Tokens::get();
+    let mut out = None;
+    let ty = draft["type"].as_str().unwrap_or("").to_string();
+    let (choices, whole) = pick_choices(&ty);
+    ui.label(RichText::new(solidcraft_ui_text::tr_label(pick_line(&ty, pick.what))).strong().color(t.accent));
+    if pick_many(pick.what) && !pick.points.is_empty() {
+        let n = pick.points.len();
+        let noun = if pick.what == PickWhat::Holes { "hole" } else { "face" };
+        ui.label(RichText::new(format!("{n} {noun}{} picked.", if n == 1 { "" } else { "s" })).color(t.text_dim));
+    }
+    if pick.what == PickWhat::Rails && pick.points.len() == 1 {
+        ui.label(RichText::new("1 of 2 edges picked: click the second.").color(t.text_dim));
+    }
+    ui.add_space(t.space_8);
+    if let Value::Object(op) = draft {
+        tool_rows(ui, op, tools, from);
+    }
+    if tools.is_empty() && *from.from == 0 {
+        ui.label(RichText::new("No tools in this job yet: pick one from a library in Tool from.").color(t.warning));
+    }
+    // A chamfer needs a chamfer mill (or an engraver): say so when the tool picked is not one.
+    if matches!(ty.as_str(), "chamfer2d") {
+        let tool = draft["tool"].as_u64().unwrap_or(0);
+        let label = tools.iter().find(|x| x.0 == tool).map(|x| x.1.to_ascii_lowercase()).unwrap_or_default();
+        if !(label.contains("chamfer") || label.contains("engrav")) {
+            ui.label(RichText::new("A chamfer needs a chamfer mill: pick one in Tool (or from a library in Tool from).").color(t.warning));
+        }
+    }
+    ui.add_space(t.space_8);
+    ui.horizontal_wrapped(|ui| {
+        if pick_many(pick.what)
+            && !pick.points.is_empty()
+            && crate::ui_kit::button(ui, solidcraft_ui_text::tr_label("Done"), crate::ui_kit::Button::Primary).clicked()
+        {
+            out = Some(PickAction::Done);
+        }
+        if let Some(w) = whole
+            && crate::ui_kit::button(ui, solidcraft_ui_text::tr_label(w), crate::ui_kit::Button::Normal).clicked()
+        {
+            out = Some(PickAction::Whole);
+        }
+        for c in choices.iter().filter(|c| **c != pick.what) {
+            if crate::ui_kit::button(ui, solidcraft_ui_text::tr_label(pick_switch_label(*c)), crate::ui_kit::Button::Normal).clicked() {
+                out = Some(PickAction::Switch(*c));
+            }
+        }
+        if let Some(what) = selected
+            && crate::ui_kit::button(ui, format!("Use What's Selected ({what})"), crate::ui_kit::Button::Normal).clicked()
+        {
+            out = Some(PickAction::UseSelected);
+        }
+        if crate::ui_kit::button(ui, solidcraft_ui_text::tr_label("Adjust…"), crate::ui_kit::Button::Normal)
+            .on_hover_text(solidcraft_ui_text::tr_label("The full form: depths, stepover, heights, linking and the rest"))
+            .clicked()
+        {
+            out = Some(PickAction::Adjust);
+        }
+    });
+    // Below the buttons (so they stay put while it changes): the few settings that belong to
+    // what the pointer is on in the model, the basics when it is on nothing; where those numbers
+    // live, and changed right here.
+    if let Value::Object(op) = draft {
+        quick_rows(ui, op, inputs, hover);
+    }
+    out
+}
+
+/// The settings the click panel shows for what the pointer is on: (the key, under `heights`
+/// when it starts with `heights.`, and its label). Only those the operation has are drawn.
+fn quick_keys(ty: &str, hover: Option<crate::toolbar::HoverShape>) -> Vec<(&'static str, &'static str)> {
+    use crate::toolbar::HoverShape as H;
+    let holes = matches!(ty, "drill" | "bore" | "circular" | "thread");
+    match hover {
+        _ if holes => {
+            vec![("heights.bottom", "Hole bottom"), ("break_through", "Break-through (mm)"), ("peck", "Peck depth (mm)"), ("cycle", "Cycle")]
+        }
+        Some(H::Top) => vec![("heights.top", "Top"), ("heights.bottom", "Bottom: how deep it cuts"), ("stepdown", "Stepdown (mm)"), ("stepover", "Stepover (mm)")],
+        Some(H::Floor) => vec![("heights.bottom", "Bottom: how deep it cuts"), ("heights.top", "Top"), ("stepdown", "Stepdown (mm)"), ("stock_to_leave_axial", "Leave on the floor (mm)")],
+        Some(H::Wall | H::OutsideWall | H::Boss) => {
+            vec![("stock_to_leave_radial", "Leave on the walls (mm)"), ("side", "Side"), ("stepover", "Stepover (mm)"), ("stepdown", "Stepdown (mm)")]
+        }
+        Some(H::Edge | H::OutsideEdge) if ty == "chamfer2d" => vec![("width", "Chamfer width (mm)"), ("tip_offset", "Tip below the edge (mm)"), ("side", "Side")],
+        Some(H::Edge | H::OutsideEdge) => vec![("stock_to_leave_radial", "Leave on the walls (mm)"), ("side", "Side"), ("heights.top", "Top")],
+        Some(H::Curved) => vec![("stepover", "Stepover (mm)"), ("stock_to_leave_axial", "Leave on the surface (mm)"), ("tolerance", "Tolerance (mm)")],
+        Some(H::Hole) | None => vec![
+            ("heights.bottom", "Bottom: how deep it cuts"),
+            ("stepdown", "Stepdown (mm)"),
+            ("stepover", "Stepover (mm)"),
+            ("width", "Width (mm)"),
+            ("stock_to_leave_radial", "Leave on the walls (mm)"),
+        ],
+    }
+}
+
+/// The click panel's few settings for what the pointer is on.
+fn quick_rows(ui: &mut egui::Ui, op: &mut Map<String, Value>, inputs: &mut Inputs, hover: Option<crate::toolbar::HoverShape>) {
+    let t = Tokens::get();
+    let ty = op.get("type").and_then(Value::as_str).unwrap_or("").to_string();
+    let keys: Vec<(&str, &str)> = quick_keys(&ty, hover)
+        .into_iter()
+        .filter(|(k, _)| match k.strip_prefix("heights.") {
+            Some(h) => op.get("heights").and_then(|x| x.get(h)).is_some(),
+            None => op.contains_key(*k),
+        })
+        .take(4)
+        .collect();
+    if keys.is_empty() {
+        return;
+    }
+    let title = match hover {
+        Some(crate::toolbar::HoverShape::Top) => "Settings for the top of the part under the pointer",
+        Some(crate::toolbar::HoverShape::OutsideEdge) => "Settings for the outside edge under the pointer",
+        Some(crate::toolbar::HoverShape::Boss) => "Settings for the round boss under the pointer",
+        Some(crate::toolbar::HoverShape::Floor) => "Settings for the floor under the pointer",
+        Some(crate::toolbar::HoverShape::Wall) => "Settings for the wall under the pointer",
+        Some(crate::toolbar::HoverShape::OutsideWall) => "Settings for the outside wall under the pointer",
+        Some(crate::toolbar::HoverShape::Edge) => "Settings for the edge under the pointer",
+        Some(crate::toolbar::HoverShape::Hole) => "Settings for the hole under the pointer",
+        Some(crate::toolbar::HoverShape::Curved) => "Settings for the surface under the pointer",
+        None => "Main settings (point at the model to see where its numbers live)",
+    };
+    ui.add_space(t.space_8);
+    ui.label(RichText::new(solidcraft_ui_text::tr_label(title)).color(t.text_dim));
+    let choices = cam::ops::OpKind::choices(&ty);
+    let from = cam::ops::variants::<cam::linking::HeightRef>(Value::Null);
+    for (key, label) in keys {
+        match key.strip_prefix("heights.") {
+            Some(h) => {
+                if let Some(Value::Object(hs)) = op.get_mut("heights")
+                    && let Some(v) = hs.get_mut(h)
+                {
+                    height(ui, inputs, key, label, v, &from);
+                }
+            }
+            None => {
+                let list = choices.iter().find(|(k, _)| k == key).map(|x| x.1.as_slice());
+                if let Some(v) = op.get_mut(key) {
+                    value(ui, inputs, key, label, v, list);
+                }
+            }
+        }
+    }
+}
+
+/// Whether `g` is the blank geometry a new operation opens with (a point at the origin, sketch
+/// 0, the made-up chains and rails), not anything picked.
+fn placeholder_geometry(g: &Value) -> bool {
+    let origin = |p: &Value| p.as_array().is_some_and(|a| a.iter().all(|x| x.as_f64() == Some(0.0)));
+    match g["source"].as_str() {
+        Some("faces" | "holes" | "walls") => g["points"].as_array().is_some_and(|a| a.is_empty() || a.iter().all(origin)),
+        Some("sketch") => g["feature"].as_u64() == Some(0),
+        Some("chains") => g["bottom"] == json!([[0, 0, 0], [10, 0, 0]]) || g["bottom"] == json!([[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]]),
+        Some("rails") => g["first"] == json!([[0, 0, 0], [10, 0, 0]]) || g["first"] == json!([[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]]),
+        _ => false,
+    }
+}
+
+/// The geometry a pick makes for an operation of kind `ty`.
+fn pick_geometry(what: PickWhat, points: &[Value], sketch: Option<u64>) -> Option<Value> {
+    if points.is_empty() && sketch.is_none() {
+        return None;
+    }
+    Some(match what {
+        // A floor and a wall both find the floor (a wall clicked by mistake stands on it).
+        PickWhat::Floor | PickWhat::Walls => json!({"source": "walls", "points": points}),
+        PickWhat::Faces => json!({"source": "faces", "points": points}),
+        PickWhat::Holes => json!({"source": "holes", "points": points, "diameter": 0.0}),
+        PickWhat::Sketch => json!({"source": "sketch", "feature": sketch?}),
+        PickWhat::SwarfWall => json!({"source": "swarf_wall", "point": points.first()?}),
+        PickWhat::Rails if points.len() == 2 => json!({"source": "rail_edges", "points": points}),
+        PickWhat::Rails | PickWhat::Nothing => return None,
+    })
+}
+
+/// What one click picked for `what`: a point on the face, edge or hole, or a sketch.
+fn pick_of(sel: &solidcraft_engine::Sel, what: PickWhat) -> Option<(Option<Value>, Option<u64>)> {
+    use solidcraft_engine::Sel;
+    match (sel, what) {
+        (Sel::Profile { sketch, .. }, PickWhat::Sketch) => Some((None, Some(*sketch))),
+        (Sel::Face { point, .. }, PickWhat::Floor | PickWhat::Faces | PickWhat::Walls | PickWhat::Holes | PickWhat::SwarfWall)
+        | (Sel::Edge { point, .. }, PickWhat::Walls | PickWhat::Holes | PickWhat::SwarfWall | PickWhat::Rails) => {
+            Some((Some(json!([point.x, point.y, point.z])), None))
+        }
+        _ => None,
+    }
+}
+
+/// Puts what was picked into the new operation, adds it and makes its toolpath; the editor
+/// closes when it is added. False when it was refused (the message says why).
+fn finish_pick(app: &mut SolveApp, ed: &mut CamEditor, geometry: Option<Value>) -> bool {
+    let ty = ed.draft["type"].as_str().unwrap_or("").to_string();
+    if let (Some(g), Value::Object(op)) = (geometry, &mut ed.draft) {
+        op.insert("geometry".into(), g);
+        // An area operation keeps to what was picked.
+        if serde_json::from_value::<cam::ops::OpKind>(json!({"type": ty})).is_ok_and(|k| k.uses_boundary()) {
+            let b = op.entry("boundary").or_insert_with(|| serde_json::to_value(cam::boundary::Boundary::default()).unwrap_or(Value::Null));
+            if let Value::Object(b) = b {
+                b.insert("source".into(), json!("selection"));
+            }
+        }
+    }
+    if !apply(app, ed) {
+        return false;
+    }
+    let Target::Operation(id) = ed.target else { return false };
+    let name = ed.draft["name"].as_str().unwrap_or("Operation").to_string();
+    let _ = app.session.execute("select.clear", &json!({}));
+    // `apply` made its toolpath.
+    if app.session.cam.operations.contains_key(&id) {
+        app.set_status(format!("{name} added and its toolpath made. Double-click it in the Browser to adjust it."), false);
+    } else {
+        let why = ed.message.as_ref().map(|m| m.0.clone()).unwrap_or_default();
+        app.set_status(format!("{name} added; its toolpath could not be made. {why} Double-click it in the Browser to adjust it."), true);
+    }
+    true
+}
+
 /// What the two-click panel asked for.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum QuickAction {
@@ -564,6 +929,14 @@ pub fn apply(app: &mut SolveApp, ed: &mut CamEditor) -> bool {
         ed.message = Some((format!("the {} must be a JSON object", ed.target.noun()), true));
         return false;
     }
+    // A new operation with nothing picked on the model (its geometry still the blank it opened
+    // with) would only fail: say what to click instead of adding it.
+    if matches!(ed.target, Target::NewOperation(_)) && params.get("geometry").is_some_and(placeholder_geometry) {
+        let ty = params["type"].as_str().unwrap_or("").to_string();
+        let what = pick_choices(&ty).0.first().map_or("Pick what to cut on the model first.", |w| pick_line(&ty, *w));
+        ed.message = Some((format!("Nothing picked yet. {what} (Pick on the Model)"), true));
+        return false;
+    }
     let (command, key, id) = ed.target.command();
     if !key.is_empty() {
         params[key] = json!(id);
@@ -601,6 +974,16 @@ pub fn apply(app: &mut SolveApp, ed: &mut CamEditor) -> bool {
             }
             let mut warnings: Vec<String> =
                 v["notice"]["issues"].as_array().into_iter().flatten().filter_map(|i| i["message"].as_str().map(str::to_string)).collect();
+            // An operation added or changed gets its toolpath at once (nothing waits on Generate).
+            if let Target::Operation(id) = ed.target {
+                match app.run("cam.generate", json!({"operation": id})) {
+                    Err(e) => warnings.push(format!("Its toolpath could not be made: {e}")),
+                    Ok(_) if !app.session.cam.operations.contains_key(&id) => {
+                        warnings.push("Its toolpath could not be made: see the operation's notice in the Browser.".into())
+                    }
+                    Ok(_) => {}
+                }
+            }
             // A plain command says what it did (Tool Kit: the tools it added).
             if let (Target::Run(_) | Target::Command(_), Some(info)) = (ed.target, v["notice"]["info"].as_str()) {
                 warnings.insert(0, info.to_string());
@@ -679,7 +1062,16 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         }
         _ => None,
     };
-    let tools: Vec<(u64, String)> = app.session.doc.manufacture.tools.tools.iter().map(|tl| (tl.id, format!("T{} {}", tl.number, tl.name))).collect();
+    // The job's tools by T number, each with its kind.
+    let mut job: Vec<&cam::tool::Tool> = app.session.doc.manufacture.tools.tools.iter().collect();
+    job.sort_by_key(|tl| tl.number);
+    let tools: Vec<(u64, String)> = job.iter().map(|tl| (tl.id, format!("T{}  ·  {}  ·  {}", tl.number, tl.name, tl.kind.label()))).collect();
+    // The shop libraries, for the Tool box: read once when an operation's form opens.
+    let is_op = matches!(ed.target, Target::Operation(_) | Target::NewOperation(_));
+    if is_op && ed.shop.is_none() {
+        ed.shop = Some(app.run("cam.library.list", json!({})).unwrap_or(Value::Null));
+    }
+    let libraries: Vec<(String, Vec<(usize, String)>)> = if is_op { shop_libraries(ed.shop.as_ref()) } else { Vec::new() };
     let machines: Vec<(String, cam::machine::Machine)> = match ed.target {
         Target::Setup(_) | Target::NewSetup => solidcraft_engine::cmd::cam::known_machines(&app.session).into_iter().map(|e| (e.id, e.machine)).collect(),
         _ => Vec::new(),
@@ -709,6 +1101,12 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     };
     let (mut ok, mut apply_now, mut cancel, mut reload) = (false, false, false, false);
     let mut quick_act: Option<QuickAction> = None;
+    let mut pick_act: Option<PickAction> = None;
+    // The full form's Pick on the Model: back to clicking what the operation works on.
+    let mut repick = false;
+    let can_pick = matches!(ed.target, Target::Operation(_) | Target::NewOperation(_)) && !pick_choices(ed.draft["type"].as_str().unwrap_or("")).0.is_empty();
+    // What the pointer is on in the model, for the click panel's settings.
+    let hover_shape = if ed.pick.is_some() { crate::toolbar::hover_shape(app) } else { None };
     // The form scrolls within most of the window's height.
     let tall = (ctx.content_rect().height() * 0.72).max(320.0);
     // Held by its top edge: opening and folding sections grows and shrinks it downwards
@@ -716,13 +1114,29 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let area = ctx.content_rect();
     // Esc stops picking an origin; it does not close the editor (its close and Cancel do).
     let can = ed.blocked().is_none();
+    // The click panel holds a few lines: narrower than the full form. Either can be dragged wider.
     let (closed, action) = crate::ui_kit::Window::new(egui::Id::unique("sc_cam_editor"), "ws_manufacture", &name)
-        .cards(2.5)
+        .cards(if ed.pick.is_some() { 1.6 } else { 2.5 })
+        .resizable()
         .placed(egui::Align2::CENTER_TOP, egui::pos2(area.center().x, area.top() + t.space_24 * 5.0))
         .fields()
         .keep_open_on_escape()
         .actions("OK", "Cancel", Some("Apply"))
         .show(ctx, can, |ui| {
+            // A new operation: click on the model, the form behind Adjust.
+            if ed.pick.is_some() {
+                {
+                    let CamEditor { draft, pick, tool_from, shop_pick, inputs, .. } = &mut ed;
+                    let mut from = ToolFrom { from: tool_from, libraries: &libraries, pick: shop_pick };
+                    if let Some(p) = pick.as_ref() {
+                        pick_act = pick_panel(ui, p, draft, inputs, hover_shape, &tools, &mut from, picked.as_ref().map(|x| x.1.as_str()));
+                    }
+                }
+                if let Some((m, error)) = &ed.message {
+                    ui.label(RichText::new(m).color(if *error { t.error } else if m.starts_with(GOOD) { t.form_success } else { t.warning }));
+                }
+                return;
+            }
             // The two-click setup: what to click next, and nothing else.
             if let Some(step) = ed.quick {
                 quick_act = quick_panel(ui, &mut ed, step);
@@ -744,6 +1158,13 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             if ed.minimized {
                 return;
             }
+            if can_pick
+                && crate::ui_kit::button(ui, solidcraft_ui_text::tr_label("Pick on the Model"), crate::ui_kit::Button::Normal)
+                    .on_hover_text(solidcraft_ui_text::tr_label("Click what this operation works on (a floor, walls, edges, holes) instead of typing it"))
+                    .clicked()
+            {
+                repick = true;
+            }
             ui.add_space(t.space_8);
             // Fields only: the JSON tab (a typed call) is not shown; scripts take the call directly.
             if ed.tab != Tab::Fields {
@@ -761,9 +1182,10 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             match ed.tab {
                 Tab::Fields => {
                     egui::ScrollArea::vertical().max_height(tall).auto_shrink([false, true]).show(ui, |ui| {
-                        let CamEditor { draft, inputs, target, place, origin, .. } = &mut ed;
+                        let CamEditor { draft, inputs, target, place, origin, tool_from, shop_pick, .. } = &mut ed;
+                        let mut from = ToolFrom { from: tool_from, libraries: &libraries, pick: shop_pick };
                         match target {
-                            Target::Operation(_) => fields(ui, draft, inputs, &tools, used.as_deref(), picked.as_ref()),
+                            Target::Operation(_) => fields(ui, draft, inputs, &tools, &mut from, used.as_deref(), picked.as_ref()),
                             Target::NewOperation(setup) => {
                                 // Which setup it goes into (the one picked in the Browser to start with).
                                 let mut k = setups.iter().position(|x| x.0 == *setup).unwrap_or(0);
@@ -772,7 +1194,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                                 if let Some(x) = setups.get(k) {
                                     *setup = x.0;
                                 }
-                                fields(ui, draft, inputs, &tools, None, picked.as_ref());
+                                fields(ui, draft, inputs, &tools, &mut from, None, picked.as_ref());
                             }
                             Target::Tool(_) | Target::NewTool => tool_fields(ui, draft, inputs, uses),
                             Target::Setup(id) => {
@@ -906,6 +1328,81 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             ed.origin.picking = false;
         }
     }
+    // A shop library tool picked in the Tool box: into the job, and into the operation.
+    if let Some(index) = ed.shop_pick.take() {
+        take_shop_tool(app, &mut ed, index);
+    }
+    // Pick on the Model from the full form: the click panel, picking what the kind picks first.
+    if repick {
+        let ty = ed.draft["type"].as_str().unwrap_or("").to_string();
+        if let Some(first) = pick_choices(&ty).0.first() {
+            ed.pick = Some(OpPick { what: *first, before: Some(app.session.selection.clone()), points: Vec::new(), sketch: None });
+            app.set_status(solidcraft_ui_text::tr_label(pick_line(&ty, *first)).to_string(), false);
+        }
+    }
+    // A new operation's panel buttons, then its clicks on the model.
+    match pick_act {
+        Some(PickAction::Switch(what)) => {
+            if let Some(p) = ed.pick.as_mut() {
+                p.what = what;
+                p.points.clear();
+                p.sketch = None;
+                p.before = Some(app.session.selection.clone());
+            }
+            let ty = ed.draft["type"].as_str().unwrap_or("").to_string();
+            app.set_status(solidcraft_ui_text::tr_label(pick_line(&ty, what)).to_string(), false);
+        }
+        Some(PickAction::Whole) => {
+            if finish_pick(app, &mut ed, None) {
+                return;
+            }
+        }
+        Some(PickAction::Done) => {
+            let g = ed.pick.as_ref().and_then(|p| pick_geometry(p.what, &p.points, p.sketch));
+            if finish_pick(app, &mut ed, g) {
+                return;
+            }
+        }
+        Some(PickAction::UseSelected) => {
+            if let Some((g, _)) = picked.clone()
+                && finish_pick(app, &mut ed, Some(g))
+            {
+                return;
+            }
+        }
+        Some(PickAction::Adjust) => ed.pick = None,
+        None => {}
+    }
+    if let Some(p) = ed.pick.as_mut() {
+        let sel = app.session.selection.clone();
+        if p.before.as_ref() != Some(&sel) {
+            let clicked = sel.last().and_then(|s| pick_of(s, p.what));
+            p.before = Some(sel);
+            if let Some((point, sketch)) = clicked {
+                if let Some(point) = point
+                    && !p.points.contains(&point)
+                {
+                    p.points.push(point);
+                }
+                if sketch.is_some() {
+                    p.sketch = sketch;
+                }
+                // One click is enough, but rails take two.
+                let ready = if p.what == PickWhat::Rails { p.points.len() >= 2 } else { !pick_many(p.what) };
+                if ready {
+                    let g = pick_geometry(p.what, &p.points, p.sketch);
+                    if finish_pick(app, &mut ed, g) {
+                        return;
+                    }
+                    // Refused: the next click tries again.
+                    if let Some(p) = ed.pick.as_mut() {
+                        p.points.clear();
+                        p.sketch = None;
+                    }
+                }
+            }
+        }
+    }
     if ok || apply_now {
         // The two-click setup's second click: once the zero is placed, it is done.
         let zero_placed = ed.quick == Some(Quick::Zero) && ed.place.is_some();
@@ -945,7 +1442,15 @@ fn switch(ed: &mut CamEditor, to: Tab) {
 
 /// The Fields tab.
 /// `picked`: the geometry the viewport's selection would give, for Use Selected.
-fn fields(ui: &mut egui::Ui, draft: &mut Value, inputs: &mut Inputs, tools: &[(u64, String)], used: Option<&str>, picked: Option<&(Value, String)>) {
+fn fields(
+    ui: &mut egui::Ui,
+    draft: &mut Value,
+    inputs: &mut Inputs,
+    tools: &[(u64, String)],
+    from: &mut ToolFrom,
+    used: Option<&str>,
+    picked: Option<&(Value, String)>,
+) {
     let Value::Object(op) = draft else { return };
     // Name, type, tool, enabled.
     if let Some(Value::String(name)) = op.get_mut("name") {
@@ -954,7 +1459,11 @@ fn fields(ui: &mut egui::Ui, draft: &mut Value, inputs: &mut Inputs, tools: &[(u
     let ty = op.get("type").and_then(Value::as_str).unwrap_or("").to_string();
     let kinds = cam::ops::OpKind::NAMES;
     let mut k = kinds.iter().position(|n| *n == ty).unwrap_or(0);
-    let labels: Vec<String> = kinds.iter().map(|n| kind_label(n)).collect();
+    // Preferences ▸ Names: the shop's or Fusion's words for each kind.
+    let labels: Vec<String> = kinds
+        .iter()
+        .map(|n| solidcraft_ui_text::names::command(&format!("cam.operation.{n}")).map_or_else(|| kind_label(n), str::to_string))
+        .collect();
     let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
     crate::ui_kit::row(ui, "Type", |ui| crate::ui_kit::dropdown(ui, "cam_ed_type", &mut k, &refs));
     if let Some(new) = kinds.get(k).filter(|n| **n != ty) {
@@ -962,16 +1471,50 @@ fn fields(ui: &mut egui::Ui, draft: &mut Value, inputs: &mut Inputs, tools: &[(u
         inputs.text.clear();
         inputs.invalid.clear();
     }
-    let tool = op.get("tool").and_then(Value::as_u64).unwrap_or(0);
-    let mut ti = tools.iter().position(|x| x.0 == tool).unwrap_or(usize::MAX);
-    let tool_labels: Vec<&str> = tools.iter().map(|x| x.1.as_str()).collect();
-    crate::ui_kit::row(ui, "Tool", |ui| crate::ui_kit::dropdown(ui, "cam_ed_tool", &mut ti, &tool_labels));
-    if let Some((id, _)) = tools.get(ti).filter(|x| x.0 != tool) {
-        op.insert("tool".into(), json!(id));
-    }
+    tool_rows(ui, op, tools, from);
     if let Some(Value::Bool(on)) = op.get_mut("enabled") {
         crate::ui_kit::checkbox(ui, "Enabled", on);
     }
+    rest_of_fields(ui, op, inputs, used, picked);
+}
+
+/// The operation's Tool from and Tool rows: the job's own tools, or a shop library (a pick
+/// copies the tool into the job, the library stays as it is).
+fn tool_rows(ui: &mut egui::Ui, op: &mut Map<String, Value>, tools: &[(u64, String)], from: &mut ToolFrom) {
+    if !from.libraries.is_empty() {
+        let names: Vec<String> = std::iter::once("Job tools".to_string())
+            .chain(from.libraries.iter().map(|(name, list)| format!("{name} ({})", list.len())))
+            .collect();
+        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        *from.from = (*from.from).min(refs.len() - 1);
+        crate::ui_kit::row(ui, "Tool from", |ui| crate::ui_kit::dropdown(ui, "cam_ed_tool_from", from.from, &refs));
+    }
+    let tool = op.get("tool").and_then(Value::as_u64).unwrap_or(0);
+    match from.libraries.get(from.from.wrapping_sub(1)).filter(|_| *from.from > 0) {
+        Some((_, list)) => {
+            let mut ti = usize::MAX;
+            let labels: Vec<&str> = list.iter().map(|x| x.1.as_str()).collect();
+            crate::ui_kit::row(ui, "Tool", |ui| crate::ui_kit::dropdown(ui, "cam_ed_tool_lib", &mut ti, &labels));
+            if let Some((index, _)) = list.get(ti) {
+                *from.pick = Some(*index);
+            }
+            let t = Tokens::get();
+            ui.label(RichText::new("Picking a tool copies it into this job. Edit it there: the library stays as it is.").color(t.text_dim));
+            ui.label(RichText::new(crate::shop_library::PLACEHOLDER_NOTE).color(t.text_dim));
+        }
+        None => {
+            let mut ti = tools.iter().position(|x| x.0 == tool).unwrap_or(usize::MAX);
+            let tool_labels: Vec<&str> = tools.iter().map(|x| x.1.as_str()).collect();
+            crate::ui_kit::row(ui, "Tool", |ui| crate::ui_kit::dropdown(ui, "cam_ed_tool", &mut ti, &tool_labels));
+            if let Some((id, _)) = tools.get(ti).filter(|x| x.0 != tool) {
+                op.insert("tool".into(), json!(id));
+            }
+        }
+    }
+}
+
+/// The operation form below its tool: what it works on, its parameters and the folded sections.
+fn rest_of_fields(ui: &mut egui::Ui, op: &mut Map<String, Value>, inputs: &mut Inputs, used: Option<&str>, picked: Option<&(Value, String)>) {
     let ty = op.get("type").and_then(Value::as_str).unwrap_or("").to_string();
     // What the operation works on, and a way to take it from the viewport's selection, at the
     // top where it is seen first.
@@ -1025,7 +1568,7 @@ fn fields(ui: &mut egui::Ui, draft: &mut Value, inputs: &mut Inputs, tools: &[(u
             ("tolerance", "Tolerance (mm)"),
         ] {
             if let Some(v) = op.get_mut(key) {
-                value(ui, inputs, key, label, v, None);
+                value(ui, inputs, key, solidcraft_ui_text::names::cam(label), v, None);
             }
         }
     });
@@ -1089,17 +1632,17 @@ fn fields(ui: &mut egui::Ui, draft: &mut Value, inputs: &mut Inputs, tools: &[(u
         });
     }
     if let Some(Value::Object(h)) = op.get_mut("heights") {
-        section(ui, "Heights", false, |ui| {
+        section(ui, solidcraft_ui_text::names::cam("Heights"), false, |ui| {
             let from = cam::ops::variants::<cam::linking::HeightRef>(Value::Null);
             for (key, label) in HEIGHTS {
                 if let Some(v) = h.get_mut(key) {
-                    height(ui, inputs, &format!("heights.{key}"), label, v, &from);
+                    height(ui, inputs, &format!("heights.{key}"), solidcraft_ui_text::names::cam(label), v, &from);
                 }
             }
         });
     }
     if let Some(Value::Object(l)) = op.get_mut("linking") {
-        section(ui, "Linking", false, |ui| {
+        section(ui, solidcraft_ui_text::names::cam("Linking"), false, |ui| {
             let keys: Vec<String> = l.keys().cloned().collect();
             for key in keys {
                 let path = format!("linking.{key}");
@@ -1114,6 +1657,78 @@ fn fields(ui: &mut egui::Ui, draft: &mut Value, inputs: &mut Inputs, tools: &[(u
             }
         });
     }
+}
+
+/// The operation form's Tool box source: which list it shows, the shop libraries (each with its
+/// tools' library indices and labels), and the library tool picked this frame.
+struct ToolFrom<'a> {
+    from: &'a mut usize,
+    libraries: &'a [(String, Vec<(usize, String)>)],
+    pick: &'a mut Option<usize>,
+}
+
+/// The shop library's tools by library, in the order the libraries come.
+fn shop_libraries(list: Option<&Value>) -> Vec<(String, Vec<(usize, String)>)> {
+    let mut out: Vec<(String, Vec<(usize, String)>)> = Vec::new();
+    let Some(tools) = list.and_then(|l| l["tools"].as_array()) else { return out };
+    // By kind, then smallest first: the kind leads each label (a dropdown has no headings).
+    let mut order: Vec<usize> = (0..tools.len()).collect();
+    let key = |i: &usize| {
+        let tl = &tools[*i]["tool"];
+        (crate::shop_library::kind_rank(tl["kind"].as_str().unwrap_or("")), tl["diameter"].as_f64().unwrap_or(0.0))
+    };
+    order.sort_by(|a, b| key(a).0.cmp(&key(b).0).then(key(a).1.total_cmp(&key(b).1)));
+    for i in order {
+        let e = &tools[i];
+        let index = e["index"].as_u64().map_or(i, |n| n as usize);
+        let tl = &e["tool"];
+        let number = tl["number"].as_u64().unwrap_or(0);
+        let label = format!(
+            "{}  ·  {} mm  ·  {}{}",
+            crate::shop_library::kind_word(tl["kind"].as_str().unwrap_or("")),
+            (tl["diameter"].as_f64().unwrap_or(0.0) * 1000.0).round() / 1000.0,
+            if number > 0 { format!("T{number} ") } else { String::new() },
+            tl["name"].as_str().unwrap_or(""),
+        );
+        let library = e["library"].as_str().unwrap_or("").to_string();
+        match out.iter_mut().find(|(n, _)| *n == library) {
+            Some((_, list)) => list.push((index, label)),
+            None => out.push((library, vec![(index, label)])),
+        }
+    }
+    out
+}
+
+/// Puts the shop library tool `index` into the operation being edited: the job's own copy when
+/// it has one already (same name, kind and diameter), else a new copy.
+fn take_shop_tool(app: &mut SolveApp, ed: &mut CamEditor, index: usize) {
+    let entry = ed.shop.as_ref().and_then(|l| l["tools"].as_array()).and_then(|t| t.iter().find(|e| e["index"].as_u64() == Some(index as u64)));
+    let Some(entry) = entry.cloned() else { return };
+    let want = &entry["tool"];
+    let same = app.session.doc.manufacture.tools.tools.iter().find(|t| {
+        let v = serde_json::to_value(t).unwrap_or(Value::Null);
+        v["name"] == want["name"] && v["kind"] == want["kind"] && (t.diameter - want["diameter"].as_f64().unwrap_or(-1.0)).abs() < 1e-6
+    });
+    let library = entry["library"].as_str().unwrap_or("").to_string();
+    let (id, message) = match same {
+        Some(t) => (t.id, format!("{GOOD}T{} {} is already in this job: picked it.", t.number, t.name)),
+        None => match app.run("cam.library.add", json!({"indices": [index]})) {
+            Ok(v) => {
+                let t = &v["tools"][0];
+                let Some(id) = t["id"].as_u64() else { return };
+                (id, format!("{GOOD}T{} {} copied into this job from {library}.", t["number"], t["name"].as_str().unwrap_or("")))
+            }
+            Err(e) => {
+                ed.message = Some((e, true));
+                return;
+            }
+        },
+    };
+    if let Value::Object(op) = &mut ed.draft {
+        op.insert("tool".into(), json!(id));
+    }
+    ed.tool_from = 0;
+    ed.message = Some((message, false));
 }
 
 /// The Fields tab of a tool.
@@ -1145,6 +1760,10 @@ fn tool_fields(ui: &mut egui::Ui, draft: &mut Value, inputs: &mut Inputs, uses: 
         tl.retain(|key, _| !TOOL_KIND_KEYS.contains(&key.as_str()));
         tl.insert("kind".into(), json!(new));
         if let Value::Object(d) = tool_kind_default(new, diameter) {
+            for key in d.keys() {
+                inputs.text.remove(key);
+                inputs.invalid.remove(key);
+            }
             tl.extend(d);
         }
         inputs.text.retain(|key, _| !TOOL_KIND_KEYS.contains(&key.as_str()));
@@ -1163,12 +1782,20 @@ fn tool_fields(ui: &mut egui::Ui, draft: &mut Value, inputs: &mut Inputs, uses: 
         let diameter_label = match kind_now.as_str() {
             "plasma" => "Kerf width (mm)",
             "laser" => "Spot size (mm)",
+            "boring_bar" => "Smallest bore (mm)",
+            "tap" => "Thread diameter (mm)",
             _ => "Diameter (mm)",
+        };
+        let necked = matches!(kind_now.as_str(), "t_slot" | "slitting_saw" | "dovetail" | "lollipop");
+        let (flute_label, shank_label) = match kind_now.as_str() {
+            "t_slot" | "slitting_saw" => ("Disc thickness (mm)", "Neck diameter (mm)"),
+            _ if necked => ("Cutting height (mm)", "Neck diameter (mm)"),
+            _ => ("Flute length (mm)", "Shank diameter (mm)"),
         };
         for (key, label) in [
             ("diameter", diameter_label),
-            ("flute_length", "Flute length (mm)"),
-            ("shank_diameter", "Shank diameter (mm)"),
+            ("flute_length", flute_label),
+            ("shank_diameter", shank_label),
             ("overall_length", "Stick-out (mm)"),
             ("holder_diameter", "Holder diameter (mm)"),
             ("flutes", "Flutes"),
@@ -1550,6 +2177,14 @@ fn tool_kind_default(kind: &str, diameter: f64) -> Value {
         "laser" => json!({"wavelength_nm": 445.0}),
         "plasma" => json!({"pierce_height": 3.8, "cut_height": 1.5, "pierce_delay_s": 0.5}),
         "tapered_ball" => json!({"tip_radius": (diameter * 0.25).max(0.1), "taper_angle_deg": 5.0}),
+        // Cutters on a neck start with one: thinner than the cutting part.
+        "t_slot" => json!({"shank_diameter": diameter * 0.4, "flute_length": (diameter * 0.35).max(0.5)}),
+        "slitting_saw" => json!({"shank_diameter": diameter * 0.3, "flute_length": (diameter * 0.05).max(0.5)}),
+        "lollipop" => json!({"shank_diameter": diameter * 0.5, "flute_length": diameter}),
+        "dovetail" => json!({"angle_deg": 60.0, "shank_diameter": diameter * 0.4, "flute_length": (diameter * 0.3).max(0.5)}),
+        "tap" | "thread_mill" => json!({"pitch": 1.0}),
+        "corner_round" => json!({"round_radius": (diameter * 0.25).max(0.1)}),
+        "engraver" => json!({"tip_angle_deg": 30.0, "tip_diameter": (0.1f64).min(diameter * 0.25)}),
         _ => json!({}),
     }
 }
@@ -1804,6 +2439,7 @@ fn geometry_picks(g: &Value) -> Option<String> {
     let count = |k: &str| g.get(k).and_then(Value::as_array).map_or(0, Vec::len);
     let n = match g.get("source").and_then(Value::as_str)? {
         "faces" => (count("points"), "face"),
+        "walls" => (count("points"), "wall"),
         "holes" => (count("points"), "hole"),
         "loops" => (count("loops"), "loop"),
         "sketch" => return Some(format!("sketch {}", g["feature"].as_u64().unwrap_or(0))),

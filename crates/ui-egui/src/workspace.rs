@@ -842,6 +842,10 @@ pub const RIBBON_LABELS: &[(&str, &str)] = &[
 ];
 
 pub fn ribbon_button_label(command: &CommandSpec) -> &str {
+    // Preferences ▸ Names: the shop's or Fusion's words for the command.
+    if let Some(named) = solidcraft_ui_text::names::command(command.id) {
+        return named;
+    }
     RIBBON_LABELS.iter().find(|(id, _)| *id == command.id).map_or(command.label, |(_, label)| *label)
 }
 

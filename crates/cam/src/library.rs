@@ -164,6 +164,8 @@ fn fusion(data: &[Value]) -> Imported {
         let re = mm("RE").unwrap_or(0.0);
         let ta = f(&g, "TA");
         let sig = f(&g, "SIG");
+        let pitch = mm("TP").or_else(|| mm("thread-pitch")).filter(|p| (0.05..=20.0).contains(p));
+        let tip_d = mm("tip-diameter").unwrap_or(0.0);
         let (kind, diameter) = match ty.as_str() {
             "flat end mill" | "face mill" => (ToolKind::FlatEnd, dc),
             "ball end mill" => (ToolKind::BallEnd, dc),
@@ -174,6 +176,18 @@ fn fusion(data: &[Value]) -> Imported {
             "counter sink" => (ToolKind::Chamfer { tip_angle_deg: sig.unwrap_or(90.0) }, dc),
             "spot drill" | "center drill" => (ToolKind::SpotDrill { tip_angle_deg: sig.unwrap_or(90.0) }, dc),
             "drill" => (ToolKind::Drill { tip_angle_deg: sig.unwrap_or(118.0) }, dc),
+            "slot mill" => (ToolKind::TSlot, dc),
+            "dovetail mill" => (ToolKind::Dovetail { angle_deg: ta.filter(|a| (10.0..90.0).contains(a)).unwrap_or(60.0) }, dc),
+            "lollipop mill" => (ToolKind::Lollipop, dc),
+            "tap right hand" | "tap left hand" | "tap" => (ToolKind::Tap { pitch: pitch.unwrap_or(1.0) }, dc),
+            "thread mill" => (ToolKind::ThreadMill { pitch: pitch.unwrap_or(1.0) }, dc),
+            "reamer" => (ToolKind::Reamer, dc),
+            "boring bar" => (ToolKind::BoringBar, dc),
+            "radius mill" if re > 0.0 && re < dc * 0.5 => (ToolKind::CornerRound { round_radius: re }, dc),
+            // An engraving cutter: a V with a flat tip.
+            "tapered mill" if ta.unwrap_or(0.0) >= 15.0 && re <= 1e-6 && tip_d > 0.0 && tip_d < dc => {
+                (ToolKind::Engraver { tip_angle_deg: 2.0 * ta.unwrap_or(15.0), tip_diameter: tip_d }, dc)
+            }
             // A V-bit (a wide taper, a sharp tip) cuts like a chamfer mill; a carving bit is a
             // tapered ball whose ball is the tip and whose widest is the shank.
             "tapered mill" if ta.unwrap_or(0.0) >= 15.0 && re <= 1e-6 => (ToolKind::Chamfer { tip_angle_deg: 2.0 * ta.unwrap_or(45.0) }, dc),
@@ -181,7 +195,7 @@ fn fusion(data: &[Value]) -> Imported {
                 let widest = shank.unwrap_or(dc).max(dc);
                 (ToolKind::TaperedBall { tip_radius: if re > 0.0 { re } else { dc * 0.5 }.clamp(0.001, widest * 0.5), taper_angle_deg: ta.unwrap_or(1.0) }, widest)
             }
-            // Anything else (taps, reamers, T-slots, thread mills…): a plain cutter of its
+            // Anything else (form mills, counterbores…): a plain cutter of its
             // diameter, which is all a post needs; its own type stays in the name.
             _ => {
                 out.plain(&ty);
@@ -206,7 +220,11 @@ fn fusion(data: &[Value]) -> Imported {
 
 /// A tool kind from a word: this program's (`flat_end`), HansFel's (`flat_endmill`, `v_bit`) or
 /// a person's (`flat`, `end mill`, `v-bit`).
-fn kind_of(word: &str, corner: Option<f64>, tip: Option<f64>, diameter: f64) -> Option<ToolKind> {
+fn kind_of(word: &str, v: &Value, diameter: f64) -> Option<ToolKind> {
+    let corner = f(v, "corner_radius").or_else(|| f(v, "round_radius"));
+    let tip = f(v, "tip_angle").or_else(|| f(v, "tip_angle_deg")).or_else(|| f(v, "angle_deg"));
+    let pitch = f(v, "pitch").filter(|p| (0.05..=20.0).contains(p));
+    let tip_diameter = f(v, "tip_diameter");
     let w: String = word.to_ascii_lowercase().chars().filter(|c| c.is_ascii_alphanumeric()).collect();
     Some(match w.as_str() {
         "flat" | "flatend" | "flatendmill" | "endmill" | "square" | "facemill" => ToolKind::FlatEnd,
@@ -220,6 +238,23 @@ fn kind_of(word: &str, corner: Option<f64>, tip: Option<f64>, diameter: f64) -> 
         "drill" | "twistdrill" => ToolKind::Drill { tip_angle_deg: tip.unwrap_or(118.0) },
         "spot" | "spotdrill" | "centredrill" | "centerdrill" => ToolKind::SpotDrill { tip_angle_deg: tip.unwrap_or(90.0) },
         "plasma" | "torch" | "plasmatorch" => ToolKind::Plasma { pierce_height: 3.8, cut_height: 1.5, pierce_delay_s: 0.5 },
+        "tslot" | "tslotcutter" | "slotmill" | "keyseat" | "keyseatcutter" | "woodruff" => ToolKind::TSlot,
+        "slittingsaw" | "saw" | "slitting" => ToolKind::SlittingSaw,
+        "dovetail" | "dovetailmill" | "dovetailcutter" => {
+            ToolKind::Dovetail { angle_deg: tip.filter(|a| (10.0..90.0).contains(a)).unwrap_or(60.0) }
+        }
+        "lollipop" | "lollipopmill" | "undercut" => ToolKind::Lollipop,
+        "tap" => ToolKind::Tap { pitch: pitch.unwrap_or(1.0) },
+        "threadmill" => ToolKind::ThreadMill { pitch: pitch.unwrap_or(1.0) },
+        "reamer" => ToolKind::Reamer,
+        "boringbar" | "boring" => ToolKind::BoringBar,
+        "cornerround" | "cornerrounding" | "radiusmill" | "roundover" => match corner {
+            Some(r) if r > 0.0 && r < diameter * 0.5 => ToolKind::CornerRound { round_radius: r },
+            _ => return None,
+        },
+        "engravingcutter" | "flattipengraver" | "engravingbit" => {
+            ToolKind::Engraver { tip_angle_deg: tip.unwrap_or(30.0), tip_diameter: tip_diameter.unwrap_or(0.1).min(diameter * 0.5) }
+        }
         _ => return None,
     })
 }
@@ -241,7 +276,7 @@ fn tool_list(items: &[Value]) -> Imported {
             continue;
         };
         // A kind with no SolidCraft shape: a plain cutter of its diameter, its kind in the name.
-        let (mut kind, plain) = match kind_of(word, f(v, "corner_radius"), f(v, "tip_angle").or_else(|| f(v, "tip_angle_deg")), diameter) {
+        let (mut kind, plain) = match kind_of(word, v, diameter) {
             Some(k) => (k, false),
             None => {
                 out.plain(if word.is_empty() { "unknown" } else { word });
@@ -332,11 +367,13 @@ mod tests {
             {"type": "tapered mill", "unit": "inches", "description": "V 60", "geometry": {"DC": 0.25, "TA": 30, "LCF": 0.25, "OAL": 2.5, "tip-diameter": 0}},
             {"type": "tapered mill", "unit": "inches", "description": "carving", "geometry": {"DC": 0.0625, "RE": 0.03125, "TA": 1, "SFDM": 0.25, "LCF": 1, "OAL": 3}},
             {"type": "drill", "unit": "millimeters", "description": "4 drill", "geometry": {"DC": 4, "SIG": 140, "LCF": 20, "OAL": 55}},
-            {"type": "thread mill", "unit": "millimeters", "description": "TM", "geometry": {"DC": 6}},
+            {"type": "thread mill", "unit": "millimeters", "description": "TM", "geometry": {"DC": 6, "TP": 1.25}},
+            {"type": "form mill", "unit": "millimeters", "description": "FM", "geometry": {"DC": 8}},
+            {"type": "slot mill", "unit": "millimeters", "description": "T-slot M6", "geometry": {"DC": 16, "LCF": 8, "SFDM": 6}},
             {"type": "holder", "description": "ER32"}
         ]}"#;
         let r = read(text).unwrap();
-        assert_eq!(r.tools.len(), 6, "{r:?}");
+        assert_eq!(r.tools.len(), 8, "{r:?}");
         let flat = &r.tools[0];
         assert!((flat.diameter - 6.35).abs() < 1e-9 && (flat.flute_length - 19.05).abs() < 1e-9 && flat.number == 4);
         assert_eq!(r.tools[1].kind, ToolKind::BullNose { corner_radius: 1.0 });
@@ -344,10 +381,13 @@ mod tests {
         assert!(matches!(r.tools[3].kind, ToolKind::TaperedBall { tip_radius, .. } if (tip_radius - 0.79375).abs() < 1e-9));
         assert!((r.tools[3].diameter - 6.35).abs() < 1e-9, "a carving bit is as wide as its shank");
         assert_eq!(r.tools[4].kind, ToolKind::Drill { tip_angle_deg: 140.0 });
-        // No shape for a thread mill: a plain cutter of its diameter, named for what it is.
-        assert_eq!(r.tools[5].kind, ToolKind::FlatEnd);
-        assert_eq!(r.tools[5].name, "TM (thread mill)");
-        assert_eq!(r.plain, vec![("thread mill".to_string(), 1)]);
+        assert_eq!(r.tools[5].kind, ToolKind::ThreadMill { pitch: 1.25 });
+        // No shape for a form mill: a plain cutter of its diameter, named for what it is.
+        assert_eq!(r.tools[6].kind, ToolKind::FlatEnd);
+        assert_eq!(r.tools[6].name, "FM (form mill)");
+        assert_eq!(r.plain, vec![("form mill".to_string(), 1)]);
+        assert_eq!(r.tools[7].kind, ToolKind::TSlot);
+        assert!((r.tools[7].neck_radius() - 3.0).abs() < 1e-9 && (r.tools[7].radius_at(10.0) - 3.0).abs() < 1e-9);
         assert!(r.skipped.is_empty(), "the holder is no tool: {r:?}");
     }
 
@@ -365,6 +405,34 @@ mod tests {
     }
 
     #[test]
+    fn new_tool_kinds_have_their_shapes() {
+        let mut dove = Tool::new(1, "dove", ToolKind::Dovetail { angle_deg: 45.0 }, 20.0);
+        dove.flute_length = 6.0;
+        dove.shank_diameter = 6.0;
+        dove.validate().unwrap();
+        assert!((dove.radius_at(0.0) - 10.0).abs() < 1e-9 && (dove.radius_at(4.0) - 6.0).abs() < 1e-9 && (dove.radius_at(6.0) - 4.0).abs() < 1e-9);
+        let mut lolly = Tool::new(1, "lolly", ToolKind::Lollipop, 10.0);
+        lolly.flute_length = 10.0;
+        lolly.shank_diameter = 4.0;
+        assert!((lolly.radius_at(5.0) - 5.0).abs() < 1e-9 && (lolly.radius_at(9.9) - 2.0).abs() < 1e-9 && lolly.radius_at(0.0) < 1e-9);
+        assert!((lolly.profile(5.0) - 5.0).abs() < 1e-9, "the ball's bottom cuts like a ball end mill");
+        let round = Tool::new(1, "round", ToolKind::CornerRound { round_radius: 3.0 }, 12.0);
+        round.validate().unwrap();
+        assert!(round.profile(2.0).abs() < 1e-9 && (round.profile(6.0) - 3.0).abs() < 1e-9 && (round.radius_at(0.0) - 3.0).abs() < 1e-9);
+        let eng = Tool::new(1, "eng", ToolKind::Engraver { tip_angle_deg: 60.0, tip_diameter: 0.2 }, 3.175);
+        eng.validate().unwrap();
+        assert!(eng.profile(0.1).abs() < 1e-9 && eng.profile(0.5) > 0.0);
+        let tap = Tool::new(1, "M6", ToolKind::Tap { pitch: 1.0 }, 6.0);
+        tap.validate().unwrap();
+        assert!(Tool::new(1, "bad", ToolKind::Tap { pitch: 0.0 }, 6.0).validate().is_err());
+        // Saved and read back with its own kind name.
+        let v = serde_json::to_value(&dove).unwrap();
+        assert_eq!(v["kind"], "dovetail");
+        assert_eq!(serde_json::from_value::<Tool>(v).unwrap(), dove);
+        assert_eq!(serde_json::to_value(Tool::new(1, "t", ToolKind::TSlot, 16.0)).unwrap()["kind"], "t_slot");
+    }
+
+    #[test]
     fn tool_lists_and_spreadsheets_read() {
         // HansFel's SolidCraftCam export.
         let hans = r#"{"tools": [
@@ -376,8 +444,8 @@ mod tests {
         assert_eq!(r.tools.len(), 3, "{r:?}");
         assert_eq!(r.tools[1].kind, ToolKind::Chamfer { tip_angle_deg: 90.0 });
         assert_eq!(r.tools[0].number, 3);
-        assert_eq!((r.tools[2].kind, r.tools[2].number), (ToolKind::FlatEnd, 9));
-        assert_eq!(r.plain, vec![("tap".to_string(), 1)]);
+        assert_eq!((r.tools[2].kind, r.tools[2].number), (ToolKind::Tap { pitch: 1.0 }, 9));
+        assert!(r.plain.is_empty(), "{r:?}");
         // This program's own tools come back as they were.
         let mine = Tool::new(5, "3 mm ball", ToolKind::BallEnd, 3.0);
         let r = read(&serde_json::json!({"tools": [mine]}).to_string()).unwrap();

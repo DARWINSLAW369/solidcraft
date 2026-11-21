@@ -94,6 +94,93 @@ fn tools_setups_and_operations_are_stored_in_the_design() {
 }
 
 #[test]
+fn a_pocket_picked_by_its_wall_or_rim_edge_is_the_pocket_picked_by_its_floor() {
+    let mut s = block();
+    let flat = add_flat(&mut s, 4.0);
+    let setup = run(&mut s, "cam.setup.create", json!({"name": "Top", "machine": TEST_MILL.clone()}))["id"].as_u64().unwrap();
+    // The pocket: x 20 to 36, y 10 to 20, floor at z 6, rim at z 10.
+    let mut ops = Vec::new();
+    for (name, geometry) in [
+        ("Floor", json!({"source": "faces", "points": [[28, 15, 6]]})),
+        ("Wall", json!({"source": "walls", "points": [[20, 15, 8]]})),
+        ("Rim edge", json!({"source": "walls", "points": [[28, 10, 10]]})),
+        ("Floor as wall", json!({"source": "walls", "points": [[28, 15, 6]]})),
+    ] {
+        let id = run(&mut s, "cam.operation.add", json!({"setup": setup, "type": "pocket2d", "tool": flat, "name": name, "stepover": 1.5, "stepdown": 2, "geometry": geometry}))["id"]
+            .as_u64()
+            .unwrap();
+        ops.push(id);
+    }
+    let g = run(&mut s, "cam.generate", json!({"setup": setup}));
+    for o in g["setups"][0]["operations"].as_array().unwrap() {
+        assert_ne!(o["status"], "error", "{o}");
+    }
+    let bounds: Vec<Value> = ops.iter().map(|id| run(&mut s, "cam.toolpath", json!({"operation": id, "limit": 100000}))["bounds"].clone()).collect();
+    let cut = |b: &Value| -> Vec<f64> { [&b["min"], &b["max"]].iter().flat_map(|p| p.as_array().unwrap().iter().map(|x| x.as_f64().unwrap())).collect() };
+    let floor = cut(&bounds[0]);
+    assert!((floor[2] - 6.0).abs() < 1e-6, "down to the floor: {floor:?}");
+    for b in &bounds[1..] {
+        let other = cut(b);
+        for (a, c) in floor.iter().zip(&other) {
+            assert!((a - c).abs() < 1e-6, "floor {floor:?}, picked another way {other:?}");
+        }
+    }
+}
+
+#[test]
+fn a_chamfer_clicked_near_an_edge_follows_that_loop_only() {
+    let mut s = block();
+    let v = run(&mut s, "cam.tool.add", json!({"name": "90 chamfer", "kind": "chamfer", "diameter": 10, "tip_angle_deg": 90, "flute_length": 5, "overall_length": 50}))["id"]
+        .as_u64()
+        .unwrap();
+    let setup = run(&mut s, "cam.setup.create", json!({"name": "Top", "machine": TEST_MILL.clone()}))["id"].as_u64().unwrap();
+    // The top (z 10) has three loops: the outside (40 x 30), the hole at (10, 10) and the pocket
+    // rim. A click on the top next to the hole chamfers the hole only.
+    let op = run(&mut s, "cam.operation.add", json!({"setup": setup, "type": "chamfer2d", "tool": v, "name": "Hole", "width": 0.5, "geometry": {"source": "walls", "points": [[10, 14, 10]]}}))["id"]
+        .as_u64()
+        .unwrap();
+    run(&mut s, "cam.generate", json!({"setup": setup}));
+    let tp = run(&mut s, "cam.toolpath", json!({"operation": op, "limit": 100000}));
+    let cuts: Vec<&Value> = tp["moves"].as_array().unwrap().iter().filter(|m| m[0] != "rapid").collect();
+    assert!(!cuts.is_empty(), "{tp}");
+    for m in cuts {
+        let (x, y) = (m[1].as_f64().unwrap(), m[2].as_f64().unwrap());
+        assert!((x - 10.0).hypot(y - 10.0) < 6.0, "only round the hole: {m}");
+    }
+}
+
+#[test]
+fn swarf_takes_a_clicked_wall_and_morph_two_clicked_edges() {
+    let mut s = block();
+    let flat = add_flat(&mut s, 4.0);
+    let setup = run(&mut s, "cam.setup.create", json!({"name": "Top", "machine": TEST_MILL.clone()}))["id"].as_u64().unwrap();
+    // The pocket's wall at x 20 (y 10 to 20, z 6 to 10), and its two long rim edges.
+    let swarf = run(&mut s, "cam.operation.add", json!({"setup": setup, "type": "swarf", "tool": flat, "name": "Wall", "geometry": {"source": "swarf_wall", "point": [20, 15, 8]}}))["id"]
+        .as_u64()
+        .unwrap();
+    let morph = run(
+        &mut s,
+        "cam.operation.add",
+        json!({"setup": setup, "type": "morph", "tool": flat, "name": "Between", "stepover": 1, "geometry": {"source": "rail_edges", "points": [[28, 10, 10], [28, 20, 10]]}}),
+    )["id"]
+        .as_u64()
+        .unwrap();
+    let g = run(&mut s, "cam.generate", json!({"setup": setup}));
+    for o in g["setups"][0]["operations"].as_array().unwrap() {
+        assert_ne!(o["status"], "error", "{o}");
+        assert!(o["stats"]["moves"].as_u64().unwrap_or(0) > 0, "{o}");
+    }
+    // Swarf runs along the wall: x stays at the wall plus the tool's radius, y within the wall.
+    let tp = run(&mut s, "cam.toolpath", json!({"operation": swarf, "limit": 100000}));
+    let cuts: Vec<&Value> = tp["moves"].as_array().unwrap().iter().filter(|m| m["kind"] != "rapid").collect();
+    assert!(!cuts.is_empty(), "{tp}");
+    // Morph runs between the rims: y from 10 to 20.
+    let tp = run(&mut s, "cam.toolpath", json!({"operation": morph, "limit": 100000}));
+    let (y0, y1) = (tp["bounds"]["min"][1].as_f64().unwrap(), tp["bounds"]["max"][1].as_f64().unwrap());
+    assert!(y0 >= 10.0 - 2.5 && y1 <= 20.0 + 2.5, "{}", tp["bounds"]);
+}
+
+#[test]
 fn block_is_faced_roughed_profiled_and_drilled() {
     let mut s = block();
     let flat = add_flat(&mut s, 6.0);
@@ -550,7 +637,7 @@ fn shop_library_imports_fusion_zip_and_adds_tools_to_the_design() {
     let fusion = r#"{"data": [
         {"type": "flat end mill", "unit": "millimeters", "description": "6 mm flat", "geometry": {"DC": 6, "LCF": 18, "OAL": 50, "NOF": 3}, "post-process": {"number": 4}},
         {"type": "drill", "unit": "inches", "description": "1/8 drill", "geometry": {"DC": 0.125, "SIG": 118, "LCF": 1, "OAL": 2}, "post-process": {"number": 4}},
-        {"type": "lollipop mill", "unit": "millimeters", "description": "lolly", "geometry": {"DC": 6}}
+        {"type": "form mill", "unit": "millimeters", "description": "form", "geometry": {"DC": 6}}
     ]}"#;
     let path = dir.join("Shop Mills.tools");
     {
@@ -562,7 +649,7 @@ fn shop_library_imports_fusion_zip_and_adds_tools_to_the_design() {
     let r = run(&mut s, "cam.library.import", json!({"path": path.display().to_string()}));
     assert_eq!(r["library"], "Shop Mills", "{r}");
     assert_eq!(r["added"], 3, "{r}");
-    assert_eq!(r["plain"]["lollipop mill"], 1, "a plain cutter of its diameter: {r}");
+    assert_eq!(r["plain"]["form mill"], 1, "a plain cutter of its diameter: {r}");
     // Again: nothing doubles up.
     let again = run(&mut s, "cam.library.import", json!({"path": path.display().to_string()}));
     assert_eq!(again["added"], 0, "{again}");

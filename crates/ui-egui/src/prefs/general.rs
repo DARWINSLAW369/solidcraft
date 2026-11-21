@@ -39,6 +39,26 @@ pub(super) fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                         );
                     });
                 });
+                // Which words name the commands and settings: the shop's, Fusion's or
+                // SolidCraft's own.
+                ui_kit::row(ui, "Names", |ui| {
+                    ui_kit::settings_control_width(ui, t.space_24 * 11.0 + t.space_16, |ui| {
+                        let word = |s: &str| match s {
+                            "shop" => "Shop (what machinists say)",
+                            "fusion" => "Fusion",
+                            _ => "SolidCraft",
+                        };
+                        let now = word(&app.preferences.names).to_string();
+                        ui_kit::dropdown_menu(ui, "pref_names", &now, |ui| {
+                            for choice in solidcraft_ui_text::names::CHOICES {
+                                if ui_kit::list_picker(ui, choice, word(choice), app.preferences.names == choice).clicked() {
+                                    app.preferences.names = choice.into();
+                                    solidcraft_ui_text::names::set(choice);
+                                }
+                            }
+                        });
+                    });
+                });
             });
         });
         ui_kit::settings_section(ui, "saving", app.tr("prefs.saving"), |ui| {

@@ -1349,6 +1349,9 @@ preference_settings! {
     /// Interface language: a registered locale ID, or `system` to follow the system's language
     /// on every start (#10138). A saved language keeps winning, so existing users don't change.
     language: String = "system".into(), 0;
+    /// Which words name the commands and settings: `shop` (what machinists say at the machine),
+    /// `fusion` or `solidcraft` (SolidCraft's own).
+    names: String = "solidcraft".into(), 0;
     /// Shared workspace composition; system windows and popups retain their purpose.
     layout: crate::ui_kit::LayoutMode = Default::default(), PAGE_LAYOUT;
     /// Preview panel placement and reflow while dragging. Off shows the drop outline.

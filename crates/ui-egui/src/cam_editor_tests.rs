@@ -26,7 +26,7 @@ fn fields_tab_shows_every_part_of_the_operation_and_apply_sets_it() {
     crate::browser::cam::edit(&mut h.app, id);
     // The sections open with an animation: let the window settle before clicking.
     h.frames(20);
-    for w in ["Fields", "JSON", "Name", "Type", "Tool", "Stepover (mm)", "Direction", "Parameters", "Heights", "Linking", "Geometry", "Apply", "OK"] {
+    for w in ["Name", "Type", "Tool", "Stepover (mm)", "Direction", "Parameters", "Heights", "Linking", "Geometry", "Apply", "OK"] {
         assert!(h.widget(w).is_some(), "{w} is drawn");
     }
     let undo = h.app.session.undo.len();
@@ -46,6 +46,7 @@ fn fields_tab_shows_every_part_of_the_operation_and_apply_sets_it() {
 }
 
 #[test]
+#[ignore = "the JSON tab is not shown in this build: the form is fields only"]
 fn json_tab_carries_the_draft_both_ways_and_ok_applies_it() {
     let mut h = Harness::new();
     let id = pocket(&mut h);
@@ -196,7 +197,7 @@ fn tools_open_in_the_same_editor_and_apply_through_tool_set() {
     h.frames(20);
     let ed = h.app.cam_editor.as_ref().unwrap();
     assert_eq!(ed.target, Target::Tool(id));
-    for w in ["Fields", "JSON", "Name", "Tool number (T)", "Kind", "Size", "Diameter (mm)", "Feeds and speeds", "Spindle speed (rev/min)", "Coolant"]
+    for w in ["Name", "Tool number (T)", "Kind", "Size", "Diameter (mm)", "Feeds and speeds", "Spindle speed (rev/min)", "Coolant"]
     {
         assert!(h.widget(w).is_some(), "{w} is drawn");
     }
@@ -231,8 +232,37 @@ fn a_tool_kind_brings_its_own_sizes() {
     assert_eq!(tool_kind_default("bull_nose", 6.0)["corner_radius"], json!(0.6000000000000001));
     assert_eq!(tool_kind_default("flat_end", 6.0), json!({}));
     let kinds = cam::ops::variants::<cam::tool::ToolKind>(json!({"kind": "\u{1}"}));
-    for k in ["flat_end", "ball_end", "bull_nose", "chamfer", "drill", "laser", "tapered_ball"] {
+    for k in [
+        "flat_end",
+        "ball_end",
+        "bull_nose",
+        "chamfer",
+        "drill",
+        "laser",
+        "tapered_ball",
+        "t_slot",
+        "slitting_saw",
+        "dovetail",
+        "lollipop",
+        "tap",
+        "thread_mill",
+        "reamer",
+        "boring_bar",
+        "corner_round",
+        "engraver",
+    ] {
         assert!(kinds.iter().any(|x| x == k), "{k} in {kinds:?}");
+    }
+    // Every kind's starting sizes make a valid tool of it.
+    for k in &kinds {
+        let mut v = serde_json::to_value(cam::tool::Tool::new(1, "t", cam::tool::ToolKind::FlatEnd, 12.0)).unwrap();
+        v.as_object_mut().unwrap().retain(|key, _| !TOOL_KIND_KEYS.contains(&key.as_str()));
+        v["kind"] = json!(k);
+        if let Value::Object(d) = tool_kind_default(k, 12.0) {
+            v.as_object_mut().unwrap().extend(d);
+        }
+        let t: cam::tool::Tool = serde_json::from_value(v).unwrap_or_else(|e| panic!("{k}: {e}"));
+        t.validate().unwrap_or_else(|e| panic!("{k}: {e}"));
     }
     assert_eq!(label_of("wavelength_nm", &json!(445.0)), "Wavelength (nm)");
 }
@@ -246,7 +276,7 @@ fn setups_open_with_stock_origin_and_machine_and_turn_over() {
     crate::browser::cam::edit_setup(&mut h.app, bottom);
     h.frames(20);
     assert_eq!(h.app.cam_editor.as_ref().unwrap().target, Target::Setup(bottom));
-    for w in ["Fields", "JSON", "Name", "Stock", "Origin and axes", "Turn Over About X", "Machine", "Bodies"] {
+    for w in ["Name", "Stock", "Origin and axes", "Turn Over About X", "Machine", "Bodies"] {
         assert!(h.widget(w).is_some(), "{w} is drawn");
     }
     let top_name = h.app.session.doc.manufacture.setups[0].name.clone();
@@ -320,7 +350,7 @@ fn a_selection_boundary_takes_what_is_selected_in_the_viewport() {
     assert_eq!(ed.target, Target::NewOperation(second));
     assert_eq!(ed.draft["type"], "scallop");
     assert_eq!(ed.draft["geometry"], json!({"source": "faces", "points": [[20.0, 15.0, 10.0]]}));
-    for w in ["Fields", "JSON", "Setup", "Boundary", "Selection: 1 face"] {
+    for w in ["Setup", "Boundary", "Selection: 1 face"] {
         assert!(h.widget(w).is_some(), "{w} is drawn");
     }
     h.step(&json!({"widget": "OK"})).unwrap();
@@ -331,6 +361,45 @@ fn a_selection_boundary_takes_what_is_selected_in_the_viewport() {
     // Drilling kinds take picked faces as holes.
     h.app.start("cam.operation.drill");
     assert_eq!(h.app.cam_editor.as_ref().unwrap().draft["geometry"]["source"], "holes");
+}
+
+#[test]
+fn a_new_operation_is_one_click_on_the_model() {
+    let mut h = Harness::new();
+    let first = pocket(&mut h);
+    let _ = first;
+    let setup = h.app.session.doc.manufacture.setups[0].id;
+    h.app.run("select.clear", json!({})).unwrap();
+    h.app.tree.picked_cam = Some(crate::browser::cam::CamPick::Setup(setup));
+    h.app.start("cam.operation.pocket2d");
+    h.frames(10);
+    let ed = h.app.cam_editor.as_ref().expect("the click panel opens");
+    assert_eq!(ed.pick.as_ref().map(|p| p.what), Some(PickWhat::Floor));
+    for w in ["Click the floor of the pocket.", "Pick a Wall or Edge Instead", "Adjust…", "Tool"] {
+        assert!(h.widget(w).is_some(), "{w} is drawn");
+    }
+    // One click on a face: the operation is added with it and the panel closes.
+    let before = h.app.session.doc.manufacture.setups[0].operations.len();
+    h.app.run("select.set", json!({"items": [{"type": "face", "body": "Block", "index": 0, "point": [20.0, 15.0, 10.0]}]})).unwrap();
+    h.frames(4);
+    assert!(h.app.cam_editor.is_none(), "added at the click");
+    let ops = &h.app.session.doc.manufacture.setups[0].operations;
+    assert_eq!(ops.len(), before + 1);
+    let geometry = serde_json::to_value(&ops[before].geometry).unwrap();
+    // A floor click finds the floor the way a wall click does (a wall clicked by mistake works too).
+    assert_eq!(geometry, json!({"source": "walls", "points": [[20.0, 15.0, 10.0]]}));
+    // Walls instead, and Adjust opens the full form.
+    h.app.run("select.clear", json!({})).unwrap();
+    h.app.start("cam.operation.pocket2d");
+    h.frames(10);
+    h.step(&json!({"widget": "Pick a Wall or Edge Instead"})).unwrap();
+    h.frames(2);
+    assert_eq!(h.app.cam_editor.as_ref().unwrap().pick.as_ref().map(|p| p.what), Some(PickWhat::Walls));
+    assert!(h.widget("Click a wall of the pocket, or the edge along its top.").is_some());
+    h.step(&json!({"widget": "Adjust…"})).unwrap();
+    h.frames(10);
+    assert!(h.app.cam_editor.as_ref().unwrap().pick.is_none());
+    assert!(h.widget("Parameters").is_some(), "the full form");
 }
 
 #[test]

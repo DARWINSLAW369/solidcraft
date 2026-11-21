@@ -1015,6 +1015,8 @@ pub struct Window<'a> {
     page_chrome: bool,
     left_slot: bool,
     page_header_in_titlebar: bool,
+    /// Its width can be dragged (from half the starting width to the screen's).
+    resizable: bool,
 }
 
 impl<'a> Window<'a> {
@@ -1040,7 +1042,15 @@ impl<'a> Window<'a> {
             page_chrome: false,
             left_slot: false,
             page_header_in_titlebar: false,
+            resizable: false,
         }
+    }
+
+    /// The window's width can be dragged at its edge, from half its starting width to the
+    /// screen's; the starting width stays what [`Self::cards`] sets.
+    pub fn resizable(mut self) -> Self {
+        self.resizable = true;
+        self
     }
 
     /// Pin the card at `align` of the screen, `offset` away (it then no longer moves).
@@ -1303,9 +1313,9 @@ impl<'a> Window<'a> {
             .id(self.id)
             .title_bar(false)
             .collapsible(false)
-            .resizable(false)
-            .min_width(inner_width)
-            .max_width(inner_width)
+            .resizable(self.resizable)
+            .min_width(if self.resizable { inner_width * 0.5 } else { inner_width })
+            .max_width(if self.resizable { dimension(ctx.content_rect().width()).max(inner_width) } else { inner_width })
             .default_width(inner_width)
             .scroll(false)
             .frame(frame)

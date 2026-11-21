@@ -42,8 +42,38 @@ fn refresh(app: &mut SolveApp, w: &mut ShopWindow) {
     w.checked.retain(|i| *i < n);
 }
 
+/// What a library tool is: a starting point, not a measured cutter.
+pub const PLACEHOLDER_NOTE: &str = "Library tools are starting points. Set the diameter and shape to match your cutter; lengths and offsets are set at the machine. Speeds and feeds are plain defaults: set your own for your machine.";
+
+/// Where a tool kind comes in a list: end mills first, then the cones, the hole tools, the
+/// special cutters, the beams.
+pub fn kind_rank(kind: &str) -> usize {
+    const ORDER: &[&str] = &[
+        "flat_end",
+        "bull_nose",
+        "ball_end",
+        "tapered_ball",
+        "chamfer",
+        "engraver",
+        "spot_drill",
+        "drill",
+        "reamer",
+        "tap",
+        "thread_mill",
+        "boring_bar",
+        "t_slot",
+        "slitting_saw",
+        "dovetail",
+        "lollipop",
+        "corner_round",
+        "laser",
+        "plasma",
+    ];
+    ORDER.iter().position(|k| *k == kind).unwrap_or(ORDER.len())
+}
+
 /// A tool kind in words.
-fn kind_word(kind: &str) -> &'static str {
+pub fn kind_word(kind: &str) -> &'static str {
     match kind {
         "flat_end" => "Flat end mill",
         "ball_end" => "Ball end mill",
@@ -54,6 +84,16 @@ fn kind_word(kind: &str) -> &'static str {
         "tapered_ball" => "Tapered ball",
         "laser" => "Laser",
         "plasma" => "Plasma torch",
+        "t_slot" => "T-slot cutter",
+        "slitting_saw" => "Slitting saw",
+        "dovetail" => "Dovetail cutter",
+        "lollipop" => "Lollipop cutter",
+        "tap" => "Tap",
+        "thread_mill" => "Thread mill",
+        "reamer" => "Reamer",
+        "boring_bar" => "Boring bar",
+        "corner_round" => "Corner rounding",
+        "engraver" => "Engraving cutter",
         _ => "Other",
     }
 }
@@ -89,17 +129,27 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let lib_opts: Vec<String> = std::iter::once("All libraries".to_string()).chain(libraries.iter().cloned()).collect();
     w.kind = w.kind.min(kind_opts.len() - 1);
     w.library = w.library.min(lib_opts.len() - 1);
-    let shown: Vec<usize> = tools
+    let mut shown: Vec<usize> = tools
         .iter()
         .enumerate()
         .filter(|(_, e)| w.kind == 0 || kind_opts.get(w.kind).copied() == Some(kind_word(e["tool"]["kind"].as_str().unwrap_or(""))))
         .filter(|(_, e)| w.library == 0 || lib_opts.get(w.library).map(String::as_str) == e["library"].as_str())
         .map(|(i, _)| i)
         .collect();
+    // By kind (a heading each), then smallest first.
+    shown.sort_by(|a, b| {
+        let key = |i: &usize| {
+            let tl = &tools[*i]["tool"];
+            (kind_rank(tl["kind"].as_str().unwrap_or("")), tl["diameter"].as_f64().unwrap_or(0.0))
+        };
+        let (ka, kb) = (key(a), key(b));
+        ka.0.cmp(&kb.0).then(ka.1.total_cmp(&kb.1))
+    });
     let mut todo: Option<Do> = None;
     let area = ctx.content_rect();
     let (closed, action) = crate::ui_kit::Window::new(egui::Id::new("sc_shop_library"), "ws_manufacture", "Tool Library")
         .cards(3.0)
+        .resizable()
         .placed(egui::Align2::CENTER_TOP, egui::pos2(area.center().x, area.top() + t.space_24 * 4.0))
         .actions("", "Close", None)
         .show(ctx, true, |ui| {
@@ -107,6 +157,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 RichText::new("Tools kept on this computer for every design. Tick the ones you want and add them to this design.")
                     .color(t.text_dim),
             );
+            ui.label(RichText::new(PLACEHOLDER_NOTE).color(t.text_dim));
             ui.horizontal(|ui| {
                 if crate::ui_kit::button(ui, "Import Library…", Button::Primary)
                     .on_hover_text("A Fusion tool library (.tools or .json), a tool list (.json) or a spreadsheet (.csv)")
@@ -137,16 +188,23 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     }
                 });
                 egui::ScrollArea::vertical().max_height((ctx.content_rect().height() * 0.3).max(180.0)).show(ui, |ui| {
+                    let mut heading = "";
                     for &i in &shown {
                         let Some(e) = tools.get(i) else { continue };
                         let tl = &e["tool"];
+                        let kind = kind_word(tl["kind"].as_str().unwrap_or(""));
+                        if kind != heading {
+                            heading = kind;
+                            ui.add_space(t.space_8);
+                            ui.label(RichText::new(kind).strong().color(t.accent));
+                        }
                         let number = tl["number"].as_u64().unwrap_or(0);
                         let label = format!(
-                            "{}{}  ·  {}  ·  {} mm",
+                            "{} mm  ·  {}{}  ·  {}",
+                            (tl["diameter"].as_f64().unwrap_or(0.0) * 1000.0).round() / 1000.0,
                             if number > 0 { format!("T{number}  ") } else { String::new() },
                             tl["name"].as_str().unwrap_or(""),
-                            kind_word(tl["kind"].as_str().unwrap_or("")),
-                            (tl["diameter"].as_f64().unwrap_or(0.0) * 1000.0).round() / 1000.0,
+                            e["library"].as_str().unwrap_or(""),
                         );
                         let mut on = w.checked.contains(&i);
                         if crate::ui_kit::checkbox(ui, &label, &mut on).on_hover_text(e["library"].as_str().unwrap_or("")).changed() {

@@ -239,6 +239,13 @@ impl Locale {
     /// Translate source labels from engine/UI tables, preserving unknown labels.
     /// Also accepts stable IDs while table helpers migrate away from source text.
     pub fn label(self, label: &str) -> &str {
+        // The words chosen in Preferences ▸ Names (shop or Fusion) for the English captions they
+        // cover; every other caption, and every other language, as before.
+        if self.0.id == "en"
+            && let Some(named) = names::map(label)
+        {
+            return named;
+        }
         let english = english();
         // Stable IDs are authoritative. An untranslated legacy ID identical to its
         // English caption can still use another translated ID for that source label.
@@ -350,6 +357,144 @@ impl Drop for LanguageScope {
 /// This thread's language, to carry into a worker thread with [`scope`].
 pub fn language() -> &'static str {
     locale().0.id
+}
+
+/// Which words name the commands and settings: the ones machinists say at the machine ("shop"),
+/// Fusion's ("fusion"), or SolidCraft's own ("solidcraft"). Set from Preferences ▸ Names.
+pub mod names {
+    use std::sync::atomic::{AtomicU8, Ordering};
+
+    /// 0 SolidCraft, 1 Shop, 2 Fusion.
+    static STYLE: AtomicU8 = AtomicU8::new(0);
+
+    /// The choices, as Preferences stores and lists them.
+    pub const CHOICES: [&str; 3] = ["shop", "fusion", "solidcraft"];
+
+    pub fn set(style: &str) {
+        STYLE.store(
+            match style {
+                "shop" => 1,
+                "fusion" => 2,
+                _ => 0,
+            },
+            Ordering::Relaxed,
+        );
+    }
+
+    pub fn get() -> &'static str {
+        match STYLE.load(Ordering::Relaxed) {
+            1 => "shop",
+            2 => "fusion",
+            _ => "solidcraft",
+        }
+    }
+
+    /// (SolidCraft's caption, the shop words, Fusion's words), for captions used for nothing
+    /// else anywhere in the program: renamed wherever they show. Settings keep their units.
+    const TABLE: &[(&str, &str, &str)] = &[
+        ("Pocket 2D", "Pocket", "2D Pocket"),
+        ("Adaptive 2D", "Adaptive Pocket", "2D Adaptive Clearing"),
+        ("Contour 2D", "Profile", "2D Contour"),
+        ("Chamfer 2D", "Chamfer", "2D Chamfer"),
+        ("Pocket 3D", "Pocket Roughing", "Pocket Clearing"),
+        ("Adaptive 3D", "Adaptive Roughing", "Adaptive Clearing"),
+        ("Contour 3D", "Waterline Finish", "Contour"),
+        ("Stepdown (mm)", "Depth of Cut, DOC (mm)", "Maximum Stepdown (mm)"),
+        ("Stepover (mm)", "Stepover, WOC (mm)", "Maximum Stepover (mm)"),
+        ("Bottom: how deep it cuts", "Bottom Z: how deep it cuts", "Bottom Height"),
+        ("Stock to leave", "Finish Allowance", "Stock to Leave"),
+        ("Leave on the walls (mm)", "Walls Allowance (mm)", "Radial Stock to Leave (mm)"),
+        ("Leave on the floor (mm)", "Floor Allowance (mm)", "Axial Stock to Leave (mm)"),
+        ("Break through (mm)", "Drill Past Bottom (mm)", "Break-Through Depth (mm)"),
+        ("Break-through (mm)", "Drill Past Bottom (mm)", "Break-Through Depth (mm)"),
+        ("Peck (mm)", "Peck Depth (mm)", "Pecking Depth (mm)"),
+        ("Peck depth (mm)", "Peck Depth (mm)", "Pecking Depth (mm)"),
+    ];
+
+    /// Commands by id: (id, the shop words, Fusion's words). Their buttons, menu rows and form
+    /// titles; their own captions ("Face", "Parallel") mean other things elsewhere.
+    const COMMANDS: &[(&str, &str, &str)] = &[
+        ("cam.operation.face", "Face Mill", "Face"),
+        ("cam.operation.pocket2d", "Pocket", "2D Pocket"),
+        ("cam.operation.adaptive2d", "Adaptive Pocket", "2D Adaptive Clearing"),
+        ("cam.operation.contour2d", "Profile", "2D Contour"),
+        ("cam.operation.chamfer2d", "Chamfer", "2D Chamfer"),
+        ("cam.operation.trace", "Follow Line", "Trace"),
+        ("cam.operation.bore", "Helical Bore", "Bore"),
+        ("cam.operation.circular", "Circle Mill", "Circular"),
+        ("cam.operation.thread", "Thread Mill", "Thread"),
+        ("cam.operation.pocket3d", "Pocket Roughing", "Pocket Clearing"),
+        ("cam.operation.adaptive3d", "Adaptive Roughing", "Adaptive Clearing"),
+        ("cam.operation.parallel", "Raster Finish", "Parallel"),
+        ("cam.operation.contour3d", "Waterline Finish", "Contour"),
+        ("cam.operation.scallop", "Scallop Finish", "Scallop"),
+        ("cam.operation.pencil", "Corner Cleanup", "Pencil"),
+        ("cam.operation.horizontal", "Flat Finish", "Horizontal"),
+        ("cam.operation.swarf", "Side Cut (Swarf)", "Swarf"),
+        ("cam.operation.rotary", "4th Axis Wrap", "Rotary"),
+        ("cam.setup.create", "Setup / Zero", "Setup"),
+        ("cam.generate", "Make Toolpaths", "Generate"),
+        ("cam.post", "Make G-code", "Post Process"),
+        ("solid.emboss", "Wrap", "Emboss"),
+        ("sketch.intersect", "Cut Outline", "Intersect"),
+    ];
+
+    /// Words that mean other things elsewhere ("Top" is a view too): renamed only inside the
+    /// CAM forms, where [`cam`] is asked.
+    const CAM_WORDS: &[(&str, &str, &str)] = &[
+        ("Clearance", "Safe Z", "Clearance Height"),
+        ("Retract", "Retract Z", "Retract Height"),
+        ("Feed", "Feed Z", "Feed Height"),
+        ("Top", "Top Z", "Top Height"),
+        ("Bottom", "Bottom Z (Depth)", "Bottom Height"),
+        ("Heights", "Z Levels", "Heights"),
+        ("Linking", "Leads & Ramps", "Linking"),
+        ("Radial (mm)", "Walls (mm)", "Radial Stock to Leave (mm)"),
+        ("Axial (mm)", "Floors (mm)", "Axial Stock to Leave (mm)"),
+    ];
+
+    fn pick(table: &[(&str, &'static str, &'static str)], key: &str) -> Option<&'static str> {
+        let style = STYLE.load(Ordering::Relaxed);
+        if style == 0 {
+            return None;
+        }
+        table.iter().find(|(own, _, _)| *own == key).map(|(_, shop, fusion)| if style == 1 { *shop } else { *fusion })
+    }
+
+    /// The chosen words for `label`, when the table covers it and a choice other than
+    /// SolidCraft's own is made.
+    pub(crate) fn map(label: &str) -> Option<&'static str> {
+        pick(TABLE, label)
+    }
+
+    /// The chosen words for command `id` (its button, menu row and form title), if any.
+    pub fn command(id: &str) -> Option<&'static str> {
+        pick(COMMANDS, id)
+    }
+
+    /// The chosen words for a CAM form's `label` (heights, sections): `label` itself when none.
+    pub fn cam(label: &str) -> &str {
+        pick(CAM_WORDS, label).or_else(|| pick(TABLE, label)).unwrap_or(label)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        #[test]
+        fn names_follow_the_choice() {
+            super::set("shop");
+            assert_eq!(super::map("Contour 2D"), Some("Profile"));
+            assert_eq!(super::command("cam.operation.contour2d"), Some("Profile"));
+            assert_eq!(super::map("Stepdown (mm)"), Some("Depth of Cut, DOC (mm)"));
+            assert_eq!(super::map("Top"), None, "the Top view keeps its name");
+            assert_eq!(super::cam("Top"), "Top Z");
+            super::set("fusion");
+            assert_eq!(super::command("cam.operation.adaptive3d"), Some("Adaptive Clearing"));
+            super::set("solidcraft");
+            assert_eq!(super::command("cam.operation.contour2d"), None);
+            assert_eq!(super::cam("Top"), "Top");
+            assert_eq!(super::get(), "solidcraft");
+        }
+    }
 }
 
 pub fn tr(id: &str) -> &str {

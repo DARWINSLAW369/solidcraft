@@ -234,12 +234,17 @@ pub fn selected_setup(app: &SolveApp) -> Option<u64> {
 /// What a tool is for: "laser", "plasma" or "cutter", so a new operation starts with a tool of
 /// its own kind.
 fn tool_class(t: &solidcraft_engine::cam::tool::Tool) -> &'static str {
-    if t.is_laser() {
-        "laser"
-    } else if t.is_plasma() {
-        "plasma"
-    } else {
-        "cutter"
+    use solidcraft_engine::cam::tool::ToolKind;
+    match t.kind {
+        _ if t.is_laser() => "laser",
+        _ if t.is_plasma() => "plasma",
+        // Hole tools: a drilling operation starts with one of these.
+        ToolKind::Drill { .. } | ToolKind::SpotDrill { .. } | ToolKind::Reamer => "drill",
+        ToolKind::Tap { .. } => "tap",
+        ToolKind::ThreadMill { .. } => "thread",
+        // Cones: a chamfer or an engraving starts with one of these.
+        ToolKind::Chamfer { .. } | ToolKind::Engraver { .. } => "chamfer",
+        _ => "cutter",
     }
 }
 
@@ -247,6 +252,10 @@ fn kind_template(kind: &str, setup: Option<u64>, tool: Option<u64>, tools: &[(u6
     use solidcraft_engine::cam::ops::OpKind;
     let (kind_name, extra): (&str, Value) = match kind {
         "tap" => ("drill", json!({"cycle": "tap", "pitch": 1.0})),
+        // Drilling pecks (G83), a peck depth in mm the user sets: never worked out from the tool.
+        "drill" => ("drill", json!({"cycle": "peck", "peck": 1.0})),
+        // A chamfer's width is the user's: a visible number, never worked out from the tool.
+        "chamfer2d" => ("chamfer2d", json!({"width": 0.5})),
         other => (other, json!({})),
     };
     let mut params =
@@ -256,6 +265,15 @@ fn kind_template(kind: &str, setup: Option<u64>, tool: Option<u64>, tools: &[(u6
         if let Value::Object(e) = extra {
             for (k, v) in e {
                 o.insert(k, v);
+            }
+        }
+        // Stepdown and stepover start at a number the user sees and sets (mm), never one worked
+        // out from the tool behind their back (0 would be).
+        for key in ["stepdown", "stepover", "roughing_stepover", "finishing_stepover", "pitch", "optimal_load", "angle_step_deg"] {
+            if let Some(v) = o.get_mut(key)
+                && v.as_f64() == Some(0.0)
+            {
+                *v = json!(1.0);
             }
         }
     }
@@ -282,6 +300,14 @@ fn kind_template(kind: &str, setup: Option<u64>, tool: Option<u64>, tools: &[(u6
     let tool = match kind_name {
         "laser_cut" | "laser_engrave" => tools.iter().find(|t| t.1 == "laser").map(|t| t.0).or(tool),
         "plasma_cut" => tools.iter().find(|t| t.1 == "plasma").map(|t| t.0).or(tool),
+        // Drilling starts with a drill (a tap for tapping), thread milling with a thread mill.
+        "drill" if kind == "tap" => tools.iter().find(|t| t.1 == "tap").or_else(|| tools.iter().find(|t| t.1 == "drill")).map(|t| t.0).or(tool),
+        "drill" => tools.iter().find(|t| t.1 == "drill").or_else(|| tools.iter().find(|t| t.1 == "cutter")).map(|t| t.0).or(tool),
+        "thread" => tools.iter().find(|t| t.1 == "thread").or_else(|| tools.iter().find(|t| t.1 == "cutter")).map(|t| t.0).or(tool),
+        // A chamfer or an engraving starts with a chamfer mill or an engraver.
+        "chamfer2d" | "engrave" => {
+            tools.iter().find(|t| t.1 == "chamfer").or_else(|| tools.iter().find(|t| t.1 == "cutter")).map(|t| t.0).or(tool)
+        }
         _ => tools.iter().find(|t| t.1 == "cutter").map(|t| t.0).or(tool),
     };
     // No tool yet: 0 (no tool has id 0), so the form opens with its Tool box empty.

@@ -54,6 +54,72 @@ pub enum ToolKind {
         /// Half angle of the taper, in degrees.
         taper_angle_deg: f64,
     },
+    /// T-slot (keyseat) cutter: a disc as wide as the diameter and as thick as the flute
+    /// length, on a thinner neck (the shank diameter).
+    TSlot,
+    /// Slitting saw: a thin disc (the flute length is its thickness) on an arbor (the shank).
+    SlittingSaw,
+    /// Dovetail cutter: widest at the tip, narrowing upwards; the angle is between the flat
+    /// bottom and the flank (45° or 60° are common).
+    Dovetail {
+        /// Angle between the bottom face and the flank, in degrees.
+        angle_deg: f64,
+    },
+    /// Lollipop (undercut) cutter: a ball on a thinner neck (the shank diameter).
+    Lollipop,
+    /// Tap: the diameter is the thread's major diameter.
+    Tap {
+        /// Thread pitch, mm per turn.
+        pitch: f64,
+    },
+    /// Single-profile thread mill: the diameter is the cutting head's.
+    ThreadMill {
+        /// Thread pitch, mm per turn.
+        pitch: f64,
+    },
+    /// Reamer: a straight cutter finishing a drilled hole to size.
+    Reamer,
+    /// Boring bar: the diameter is the smallest bore it fits in.
+    BoringBar,
+    /// Corner-rounding cutter: a concave radius above a pilot; the diameter is the widest.
+    CornerRound {
+        /// The radius it leaves on the edge, mm.
+        round_radius: f64,
+    },
+    /// Engraving cutter: a cone like a V-bit, with a small flat tip.
+    Engraver {
+        /// Full included angle of the cone, in degrees.
+        tip_angle_deg: f64,
+        /// Width of the flat tip, mm.
+        tip_diameter: f64,
+    },
+}
+
+impl ToolKind {
+    /// The kind in words, for lists and posted programs.
+    pub fn label(&self) -> &'static str {
+        match self {
+            ToolKind::FlatEnd => "flat end mill",
+            ToolKind::BallEnd => "ball end mill",
+            ToolKind::BullNose { .. } => "bull-nose end mill",
+            ToolKind::Chamfer { .. } => "chamfer mill",
+            ToolKind::Drill { .. } => "drill",
+            ToolKind::SpotDrill { .. } => "spot drill",
+            ToolKind::Laser { .. } => "laser",
+            ToolKind::Plasma { .. } => "plasma torch",
+            ToolKind::TaperedBall { .. } => "tapered ball end mill",
+            ToolKind::TSlot => "T-slot cutter",
+            ToolKind::SlittingSaw => "slitting saw",
+            ToolKind::Dovetail { .. } => "dovetail cutter",
+            ToolKind::Lollipop => "lollipop cutter",
+            ToolKind::Tap { .. } => "tap",
+            ToolKind::ThreadMill { .. } => "thread mill",
+            ToolKind::Reamer => "reamer",
+            ToolKind::BoringBar => "boring bar",
+            ToolKind::CornerRound { .. } => "corner-rounding cutter",
+            ToolKind::Engraver { .. } => "engraving cutter",
+        }
+    }
 }
 
 fn plasma_pierce_height() -> f64 {
@@ -171,8 +237,17 @@ impl Tool {
             | ToolKind::Drill { .. }
             | ToolKind::SpotDrill { .. }
             | ToolKind::Laser { .. }
-            | ToolKind::Plasma { .. } => 0.0,
-            ToolKind::BallEnd => self.radius(),
+            | ToolKind::Plasma { .. }
+            | ToolKind::TSlot
+            | ToolKind::SlittingSaw
+            | ToolKind::Dovetail { .. }
+            | ToolKind::Tap { .. }
+            | ToolKind::ThreadMill { .. }
+            | ToolKind::Reamer
+            | ToolKind::BoringBar
+            | ToolKind::CornerRound { .. }
+            | ToolKind::Engraver { .. } => 0.0,
+            ToolKind::BallEnd | ToolKind::Lollipop => self.radius(),
             ToolKind::BullNose { corner_radius } => corner_radius.clamp(0.0, self.radius()),
             ToolKind::TaperedBall { tip_radius, .. } => tip_radius.clamp(0.0, self.radius()),
         }
@@ -207,6 +282,17 @@ impl Tool {
                     z_t + (rho - tangent_rho) / a.tan().max(1e-9)
                 }
             }
+            ToolKind::Engraver { tip_angle_deg, tip_diameter } => {
+                let half = (tip_angle_deg.clamp(1.0, 179.0) * 0.5).to_radians();
+                (rho - (tip_diameter * 0.5).clamp(0.0, r)).max(0.0) / half.tan()
+            }
+            // A concave quarter circle from the pilot (the radius less the round) out to the
+            // full radius, one round radius up.
+            ToolKind::CornerRound { round_radius } => {
+                let rr = round_radius.clamp(1e-9, r);
+                let d = r - rho;
+                if d >= rr { 0.0 } else { (rr * rr - d * d).max(0.0).sqrt() }
+            }
             _ => {
                 let rc = self.corner_radius();
                 let a = r - rc;
@@ -223,7 +309,31 @@ impl Tool {
     /// Whether the profile is a flat disc, a torus and a cylinder (end mills), which the exact
     /// drop cutter handles; cones are handled through their profile only.
     pub fn is_end_mill(&self) -> bool {
-        matches!(self.kind, ToolKind::FlatEnd | ToolKind::BallEnd | ToolKind::BullNose { .. })
+        matches!(
+            self.kind,
+            ToolKind::FlatEnd
+                | ToolKind::BallEnd
+                | ToolKind::BullNose { .. }
+                | ToolKind::TSlot
+                | ToolKind::SlittingSaw
+                | ToolKind::Dovetail { .. }
+                | ToolKind::Lollipop
+                | ToolKind::Tap { .. }
+                | ToolKind::ThreadMill { .. }
+                | ToolKind::Reamer
+                | ToolKind::BoringBar
+        )
+    }
+
+    /// Whether the tool cuts under a ledge (wider low down than above): T-slot, slitting saw,
+    /// dovetail and lollipop cutters.
+    pub fn is_undercut(&self) -> bool {
+        matches!(self.kind, ToolKind::TSlot | ToolKind::SlittingSaw | ToolKind::Dovetail { .. } | ToolKind::Lollipop)
+    }
+
+    /// The neck's (or shank's) radius above the cutting part; the tool's radius when none is given.
+    pub fn neck_radius(&self) -> f64 {
+        if self.shank_diameter > 0.0 { (self.shank_diameter * 0.5).min(self.radius()) } else { self.radius() }
     }
 
     pub fn is_laser(&self) -> bool {
@@ -280,7 +390,36 @@ impl Tool {
                     return Err(CamError::Param("the pierce delay must be 0 to 10 seconds".into()));
                 }
             }
-            ToolKind::FlatEnd | ToolKind::BallEnd => {}
+            ToolKind::Dovetail { angle_deg } => {
+                if !(angle_deg.is_finite() && angle_deg >= 10.0 && angle_deg < 90.0) {
+                    return Err(CamError::Param("a dovetail's angle must be from 10 to below 90 degrees".into()));
+                }
+            }
+            ToolKind::Tap { pitch } | ToolKind::ThreadMill { pitch } => {
+                if !(pitch.is_finite() && (0.05..=20.0).contains(&pitch)) {
+                    return Err(CamError::Param("a thread pitch is from 0.05 to 20 mm".into()));
+                }
+            }
+            ToolKind::CornerRound { round_radius } => {
+                if !(round_radius.is_finite() && round_radius > 0.0 && round_radius < self.radius()) {
+                    return Err(CamError::Param("the rounding radius must be between 0 and the tool radius".into()));
+                }
+            }
+            ToolKind::Engraver { tip_angle_deg, tip_diameter } => {
+                if !(tip_angle_deg.is_finite() && tip_angle_deg > 0.0 && tip_angle_deg < 180.0) {
+                    return Err(CamError::Param("tip angle must be between 0 and 180 degrees".into()));
+                }
+                if !(tip_diameter.is_finite() && tip_diameter >= 0.0 && tip_diameter < self.diameter) {
+                    return Err(CamError::Param("the engraver's tip width must be from 0 to below its diameter".into()));
+                }
+            }
+            ToolKind::FlatEnd
+            | ToolKind::BallEnd
+            | ToolKind::TSlot
+            | ToolKind::SlittingSaw
+            | ToolKind::Lollipop
+            | ToolKind::Reamer
+            | ToolKind::BoringBar => {}
         }
         let f = &self.feeds;
         for (what, v) in [
@@ -318,6 +457,24 @@ impl Tool {
                     let rc = tip_radius.clamp(1e-9, r);
                     let a = taper_angle_deg.clamp(0.0, 89.0).to_radians();
                     if h <= rc { (rc * rc - (rc - h) * (rc - h)).max(0.0).sqrt() } else { (rc + (h - rc) * a.tan()).min(r) }
+                }
+                ToolKind::Engraver { tip_angle_deg, tip_diameter } => {
+                    let half = (tip_angle_deg.clamp(1.0, 179.0) * 0.5).to_radians();
+                    ((tip_diameter * 0.5).clamp(0.0, r) + h * half.tan()).min(r)
+                }
+                ToolKind::CornerRound { round_radius } => {
+                    let rr = round_radius.clamp(1e-9, r);
+                    if h >= rr { r } else { r - (rr * rr - h * h).max(0.0).sqrt() }
+                }
+                // Narrowing from the tip up to the neck.
+                ToolKind::Dovetail { angle_deg } => {
+                    let a = angle_deg.clamp(10.0, 89.0).to_radians();
+                    (r - h / a.tan()).max(self.neck_radius())
+                }
+                // A ball: widest at its middle, back in to the neck above it.
+                ToolKind::Lollipop => {
+                    let d = (h - r).abs().min(r);
+                    (r * r - d * d).max(0.0).sqrt().max(if h > r { self.neck_radius() } else { 0.0 })
                 }
                 _ => {
                     if h >= rc || rc <= 0.0 {

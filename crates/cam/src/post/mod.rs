@@ -653,15 +653,5 @@ pub fn post_program(post: &Post, machine: &Machine, program_name: &str, ops: &[P
 }
 
 fn tool_kind_name(t: &Tool) -> &'static str {
-    match t.kind {
-        crate::tool::ToolKind::FlatEnd => "flat end mill",
-        crate::tool::ToolKind::BallEnd => "ball end mill",
-        crate::tool::ToolKind::BullNose { .. } => "bull-nose end mill",
-        crate::tool::ToolKind::Chamfer { .. } => "chamfer mill",
-        crate::tool::ToolKind::Drill { .. } => "drill",
-        crate::tool::ToolKind::SpotDrill { .. } => "spot drill",
-        crate::tool::ToolKind::TaperedBall { .. } => "tapered ball end mill",
-        crate::tool::ToolKind::Laser { .. } => "laser",
-        crate::tool::ToolKind::Plasma { .. } => "plasma torch",
-    }
+    t.kind.label()
 }

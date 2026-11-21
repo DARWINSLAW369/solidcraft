@@ -919,7 +919,12 @@ pub fn stock_mesh(stock: &StockMap, step: usize) -> Mesh {
     };
     let at = |i: usize, j: usize| -> Option<f64> {
         let (ii, jj) = cell_of(i, j);
-        m.get(ii, jj).filter(|z| z.is_finite()).filter(|z| stock.floor.is_none() || *z > stock.floor_at(ii, jj) + 1e-9)
+        // A column cut down to (or past) the stock's bottom is cut through: not drawn, so a
+        // through hole shows as a hole rather than a floor at the bottom.
+        m.get(ii, jj)
+            .filter(|z| z.is_finite())
+            .filter(|z| *z > stock.bottom + 1e-6)
+            .filter(|z| stock.floor.is_none() || *z > stock.floor_at(ii, jj) + 1e-9)
     };
     let pt = |i: usize, j: usize, z: f64| -> Vec3 {
         let p = m.point((i * step).min(m.nx.saturating_sub(1)), (j * step).min(m.ny.saturating_sub(1)));
@@ -1149,7 +1154,17 @@ pub fn tool_mesh(tool: &Tool, tip: Vec3, axis: Vec3) -> Mesh {
         let rho = r * k as f64 / steps as f64;
         prof.push((rho, tool.profile(rho)));
     }
-    prof.push((r, tool.flute_length));
+    if tool.is_undercut() {
+        // Wider low down than above (a disc, a dovetail, a ball on a neck): its width up the
+        // cutting part.
+        let from = tool.profile(r);
+        for k in 1..=steps * 2 {
+            let h = from + (tool.flute_length - from) * k as f64 / (steps * 2) as f64;
+            prof.push((tool.radius_at(h.min(tool.flute_length)), h));
+        }
+    } else {
+        prof.push((r, tool.flute_length));
+    }
     let shank = if tool.shank_diameter > 0.0 { tool.shank_diameter * 0.5 } else { r };
     prof.push((shank, tool.flute_length));
     prof.push((shank, tool.overall_length));

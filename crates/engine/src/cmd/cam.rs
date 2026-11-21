@@ -415,7 +415,30 @@ fn tool_kind(p: &Value, cmd: &str, current: Option<ToolKind>) -> Result<ToolKind
             tip_radius: num(p, "tip_radius").ok_or_else(|| bad(cmd, "a tapered ball tool needs `tip_radius`"))?,
             taper_angle_deg: num(p, "taper_angle_deg").unwrap_or(5.0),
         },
-        other => return Err(bad(cmd, format!("unknown tool kind `{other}`: flat | ball | bull | chamfer | drill | spot | tapered_ball | laser | plasma"))),
+        "t_slot" | "tslot" | "keyseat" | "slot_mill" => ToolKind::TSlot,
+        "slitting_saw" | "saw" | "slitting" => ToolKind::SlittingSaw,
+        "dovetail" | "dovetail_mill" => ToolKind::Dovetail { angle_deg: num(p, "angle_deg").unwrap_or(60.0) },
+        "lollipop" | "lollipop_mill" | "undercut" => ToolKind::Lollipop,
+        "tap" => ToolKind::Tap { pitch: num(p, "pitch").ok_or_else(|| bad(cmd, "a tap needs the thread's `pitch` (mm)"))? },
+        "thread_mill" | "threadmill" => {
+            ToolKind::ThreadMill { pitch: num(p, "pitch").ok_or_else(|| bad(cmd, "a thread mill needs the thread's `pitch` (mm)"))? }
+        }
+        "reamer" => ToolKind::Reamer,
+        "boring_bar" | "boring" => ToolKind::BoringBar,
+        "corner_round" | "corner_rounding" | "radius_mill" => ToolKind::CornerRound {
+            round_radius: num(p, "round_radius").ok_or_else(|| bad(cmd, "a corner-rounding cutter needs `round_radius` (mm)"))?,
+        },
+        "engraver" | "engraving" => {
+            ToolKind::Engraver { tip_angle_deg: tip(30.0), tip_diameter: num(p, "tip_diameter").unwrap_or(0.1) }
+        }
+        other => {
+            return Err(bad(
+                cmd,
+                format!(
+                    "unknown tool kind `{other}`: flat | ball | bull | chamfer | drill | spot | tapered_ball | laser | plasma | t_slot | slitting_saw | dovetail | lollipop | tap | thread_mill | reamer | boring_bar | corner_round | engraver"
+                ),
+            ));
+        }
     })
 }
 
@@ -431,7 +454,11 @@ fn tool_add(s: &mut Session, p: &Value) -> Result<Value> {
     let mut tool = Tool::new(id, &name, kind, diameter);
     tool.number = p.get("number").and_then(Value::as_u64).map_or(s.doc.manufacture.tools.tools.len() as u32 + 1, |n| n.min(9999) as u32).max(1);
     let mut v = serde_json::to_value(&tool).map_err(|e| EngineError::Other(e.to_string()))?;
-    merge_json(&mut v, p, &["id", "kind", "name", "diameter", "number", "corner_radius", "tip_angle_deg", "tip_radius", "taper_angle_deg"]);
+    merge_json(
+        &mut v,
+        p,
+        &["id", "kind", "name", "diameter", "number", "corner_radius", "tip_angle_deg", "tip_radius", "taper_angle_deg", "angle_deg", "pitch", "round_radius", "tip_diameter"],
+    );
     let tool: Tool = serde_json::from_value(v).map_err(|e| bad(cmd, format!("tool fields: {e}")))?;
     tool.validate().map_err(|e| engine_err(cmd, e))?;
     let out = tool_json(&tool, 0);
@@ -484,7 +511,8 @@ fn tool_set(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "cam.tool.set";
     let id = id_param(p, "tool", cmd)?;
     let current = s.doc.manufacture.tools.get(id).cloned().ok_or_else(|| bad(cmd, format!("no tool {id}")))?;
-    let kind = if p.get("kind").is_some() || p.get("corner_radius").is_some() || p.get("tip_angle_deg").is_some() {
+    let kind_keys = ["kind", "corner_radius", "tip_angle_deg", "tip_radius", "taper_angle_deg", "angle_deg", "pitch", "round_radius", "tip_diameter"];
+    let kind = if kind_keys.iter().any(|k| p.get(*k).is_some()) {
         let mut merged = serde_json::to_value(&current).unwrap_or(Value::Null);
         merge_json(&mut merged, p, &["tool"]);
         tool_kind(&merged, cmd, Some(current.kind))?
@@ -492,7 +520,11 @@ fn tool_set(s: &mut Session, p: &Value) -> Result<Value> {
         current.kind
     };
     let mut v = serde_json::to_value(&Tool { kind, ..current.clone() }).map_err(|e| EngineError::Other(e.to_string()))?;
-    merge_json(&mut v, p, &["id", "tool", "kind", "corner_radius", "tip_angle_deg", "tip_radius", "taper_angle_deg"]);
+    merge_json(
+        &mut v,
+        p,
+        &["id", "tool", "kind", "corner_radius", "tip_angle_deg", "tip_radius", "taper_angle_deg", "angle_deg", "pitch", "round_radius", "tip_diameter"],
+    );
     let tool: Tool = serde_json::from_value(v).map_err(|e| bad(cmd, format!("tool fields: {e}")))?;
     tool.validate().map_err(|e| engine_err(cmd, e))?;
     let uses = s.doc.manufacture.tool_uses(id);
@@ -1363,7 +1395,7 @@ fn operation_from(p: &Value, cmd: &str, base: Value, setup: &Setup, tools: &cam:
         );
     }
     match (&op.kind, &tool.kind) {
-        (OpKind::Drill { .. }, ToolKind::Drill { .. } | ToolKind::SpotDrill { .. }) => {}
+        (OpKind::Drill { .. }, ToolKind::Drill { .. } | ToolKind::SpotDrill { .. } | ToolKind::Tap { .. } | ToolKind::Reamer | ToolKind::BoringBar) => {}
         (OpKind::Drill { .. }, _) => issues.push(Issue::info("tool_kind", "drilling with an end mill: fine for spotting or short holes")),
         (OpKind::Chamfer2d { .. }, ToolKind::Chamfer { .. }) => {}
         (OpKind::Chamfer2d { .. }, _) => issues.push(Issue::error("tool_kind", "2D chamfer needs a chamfer mill")),
@@ -1400,13 +1432,18 @@ fn geometry_param(g: &Value, cmd: &str) -> Result<Value> {
             "loops" | "chains_2d" | "polygons" => "loops",
             "sketch" => "sketch",
             "faces" | "face" => "faces",
+            "walls" | "wall" | "edges" | "edge" => "walls",
+            "swarf_wall" => "swarf_wall",
+            "rail_edges" | "rails_edges" => "rail_edges",
             "holes" | "hole" | "points" => "holes",
             "chains" | "swarf" => "chains",
             "rails" | "flow" => "rails",
             other => {
                 return Err(bad(
                     cmd,
-                    format!("unknown geometry source `{other}`: stock | silhouette | loops | sketch | faces | holes | chains | rails"),
+                    format!(
+                        "unknown geometry source `{other}`: stock | silhouette | loops | sketch | faces | walls | swarf_wall | rail_edges | holes | chains | rails"
+                    ),
                 ));
             }
         };
@@ -2007,6 +2044,58 @@ fn setup_model_bounds(s: &Session, st: &Setup) -> Option<Aabb3> {
     (!b.is_empty()).then_some(b)
 }
 
+/// Joins 3D edge polylines end to end into one chain (the longest run that joins), each turned
+/// as it needs to be.
+fn join_chain(mut polys: Vec<Vec<Vec3>>, tol: f64) -> Vec<Vec3> {
+    polys.retain(|p| p.len() >= 2);
+    let Some(mut chain) = (!polys.is_empty()).then(|| polys.remove(0)) else { return Vec::new() };
+    let near = |a: Vec3, b: Vec3| (a - b).len() <= tol;
+    loop {
+        let (first, last) = (chain[0], chain[chain.len() - 1]);
+        let Some(i) = polys.iter().position(|p| near(p[0], last) || near(p[p.len() - 1], last) || near(p[0], first) || near(p[p.len() - 1], first)) else {
+            break;
+        };
+        let mut p = polys.remove(i);
+        if near(p[0], last) {
+            chain.extend(p.into_iter().skip(1));
+        } else if near(p[p.len() - 1], last) {
+            p.reverse();
+            chain.extend(p.into_iter().skip(1));
+        } else if near(p[p.len() - 1], first) {
+            p.pop();
+            p.extend(chain);
+            chain = p;
+        } else {
+            p.reverse();
+            p.pop();
+            p.extend(chain);
+            chain = p;
+        }
+    }
+    chain
+}
+
+/// Turns `b` to run the same way as `a` (its start nearer `a`'s start).
+fn same_way(a: &[Vec3], b: &mut Vec<Vec3>) {
+    if let (Some(a0), Some(b0), Some(b1)) = (a.first(), b.first(), b.last())
+        && (*b1 - *a0).len() < (*b0 - *a0).len()
+    {
+        b.reverse();
+    }
+}
+
+/// How far `p` is from the polyline `pl`.
+fn polyline_distance(pl: &[Vec3], p: Vec3) -> f64 {
+    pl.windows(2)
+        .map(|w| {
+            let (a, b) = (w[0], w[1]);
+            let ab = b - a;
+            let t = if ab.dot(ab) > 0.0 { ((p - a).dot(ab) / ab.dot(ab)).clamp(0.0, 1.0) } else { 0.0 };
+            (a + ab * t - p).len()
+        })
+        .fold(f64::INFINITY, f64::min)
+}
+
 /// Joins edge polylines into closed loops by their ends.
 fn chain_loops(polys: &[Vec<Vec2>], tol: f64) -> Vec<Vec<Vec2>> {
     let mut used = vec![false; polys.len()];
@@ -2213,6 +2302,134 @@ fn resolve_geometry(
             if !zs.is_empty() {
                 g.face_z = Some(zs.iter().sum::<f64>() / zs.len() as f64);
             }
+        }
+        Geometry::Walls { points } => {
+            let state = s.model.state();
+            // The tool axis in the design's frame: the op frame's z, turned back.
+            let ax = Vec3::new(dir_to_op(Vec3::new(1.0, 0.0, 0.0)).z, dir_to_op(Vec3::new(0.0, 1.0, 0.0)).z, dir_to_op(Vec3::new(0.0, 0.0, 1.0)).z);
+            let level = |body: &solidcraft_kernel::Body, face: u32| match solidcraft_kernel::face_surface(body, face as usize) {
+                Some(solidcraft_kernel::FaceSurface::Plane { normal, point }) if dir_to_op(normal.vec()).z.abs() >= 0.99 => Some(point),
+                _ => None,
+            };
+            let mut loops: Vec<Vec<Vec2>> = Vec::new();
+            let mut zs = Vec::new();
+            for pt in points {
+                // The wall at the point, looked for a hair below it first: a rim edge's point
+                // is as near the top as the wall, and the wall is the one meant. On a wall the
+                // hair down stays on it; on a level face it finds that face.
+                let found = [0.05, 0.3, 0.0].iter().find_map(|d| match super::face::face_at_state(&state, *pt - ax * *d, None) {
+                    Ok(Some(hit)) => Some(hit),
+                    _ => None,
+                });
+                let Some((mesh, face, _, body_name)) = found else { return Err(bad(cmd, format!("no wall or edge near {pt:?}"))) };
+                let body = state.body(&body_name).ok_or_else(|| bad(cmd, format!("no body {body_name}")))?;
+                // A level face is the floor itself; a wall stands on the level face along its
+                // lowest edges.
+                let floor = match level(&body.body, face) {
+                    Some(p) => Some((face, p)),
+                    None => {
+                        let edges = mesh.face_edges(face);
+                        let low = |e: &usize| mesh.edges.get(*e).map_or(f64::INFINITY, |pl| pl.iter().map(|p| to_op(*p).z).fold(f64::INFINITY, f64::min));
+                        let bottom = edges.iter().map(low).fold(f64::INFINITY, f64::min);
+                        edges
+                            .iter()
+                            .filter(|e| (low(e) - bottom).abs() <= tol.max(1e-3) * 10.0)
+                            .flat_map(|e| mesh.edge_faces.get(*e).cloned().unwrap_or_default())
+                            .filter(|f| *f != face)
+                            .find_map(|f| level(&body.body, f).map(|p| (f, p)))
+                    }
+                };
+                let Some((floor, at)) = floor else {
+                    return Err(bad(cmd, format!("the wall at {pt:?} stands on no level face: pick the floor instead")));
+                };
+                zs.push(to_op(at).z);
+                let edges: Vec<Vec<Vec2>> =
+                    mesh.face_edges(floor).into_iter().filter_map(|e| mesh.edges.get(e)).map(|pl| pl.iter().map(|p| to_xy(*p)).collect()).collect();
+                let mut floor_loops = chain_loops(&edges, tol.max(1e-4) * 10.0);
+                for l in &mut floor_loops {
+                    *l = cam::polyline::clean(l, tol * 0.1);
+                }
+                floor_loops.retain(|l| l.len() >= 3);
+                // A chamfer goes along the one edge loop clicked near (the outside, a hole's rim,
+                // a pocket's rim), not every loop of the face.
+                if matches!(op.kind, OpKind::Chamfer2d { .. }) {
+                    let at = to_xy(*pt);
+                    let away = |l: &Vec<Vec2>| {
+                        (0..l.len())
+                            .map(|i| {
+                                let (a, b) = (l[i], l[(i + 1) % l.len()]);
+                                let ab = b - a;
+                                let t = if ab.dot(ab) > 0.0 { ((at - a).dot(ab) / ab.dot(ab)).clamp(0.0, 1.0) } else { 0.0 };
+                                (a + ab * t - at).len()
+                            })
+                            .fold(f64::INFINITY, f64::min)
+                    };
+                    if let Some(nearest) = floor_loops.iter().min_by(|x, y| away(x).total_cmp(&away(y))).cloned() {
+                        floor_loops = vec![nearest];
+                    }
+                }
+                loops.extend(floor_loops);
+            }
+            if !loops.is_empty() {
+                g.loops = cam::polyline::normalize_set(&loops);
+            }
+            if !zs.is_empty() {
+                g.face_z = Some(zs.iter().sum::<f64>() / zs.len() as f64);
+            }
+        }
+        Geometry::SwarfWall { point } => {
+            let state = s.model.state();
+            let ax = Vec3::new(dir_to_op(Vec3::new(1.0, 0.0, 0.0)).z, dir_to_op(Vec3::new(0.0, 1.0, 0.0)).z, dir_to_op(Vec3::new(0.0, 0.0, 1.0)).z);
+            let found = [0.05, 0.3, 0.0].iter().find_map(|d| match super::face::face_at_state(&state, *point - ax * *d, None) {
+                Ok(Some(hit)) => Some(hit),
+                _ => None,
+            });
+            let Some((mesh, face, _, _)) = found else { return Err(bad(cmd, format!("no wall near {point:?}"))) };
+            // The wall's edges in the op frame, with how low and how high each reaches.
+            let edges: Vec<Vec<Vec3>> = mesh.face_edges(face).into_iter().filter_map(|e| mesh.edges.get(e)).map(|pl| pl.iter().map(|p| to_op(*p)).collect()).collect();
+            let span = |pl: &Vec<Vec3>| pl.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), p| (lo.min(p.z), hi.max(p.z)));
+            let (lo, hi) = edges.iter().map(span).fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), (l, h)| (a.min(l), b.max(h)));
+            if !(hi - lo > tol) {
+                return Err(bad(cmd, format!("the face at {point:?} has no height: pick a wall")));
+            }
+            let band = ((hi - lo) * 0.25).max(tol * 10.0);
+            let bottom: Vec<Vec<Vec3>> = edges.iter().filter(|pl| span(pl).1 <= lo + band).cloned().collect();
+            let top: Vec<Vec<Vec3>> = edges.iter().filter(|pl| span(pl).0 >= hi - band).cloned().collect();
+            let (a, mut b) = (join_chain(bottom, tol.max(1e-3) * 10.0), join_chain(top, tol.max(1e-3) * 10.0));
+            if a.len() < 2 || b.len() < 2 {
+                return Err(bad(cmd, format!("the wall at {point:?} has no clear bottom and top edges")));
+            }
+            same_way(&a, &mut b);
+            g.chain_a = a;
+            g.chain_b = b;
+        }
+        Geometry::RailEdges { points } => {
+            if points.len() != 2 {
+                return Err(bad(cmd, "rails need two edges"));
+            }
+            let state = s.model.state();
+            let ax = Vec3::new(dir_to_op(Vec3::new(1.0, 0.0, 0.0)).z, dir_to_op(Vec3::new(0.0, 1.0, 0.0)).z, dir_to_op(Vec3::new(0.0, 0.0, 1.0)).z);
+            let mut rails: Vec<Vec<Vec3>> = Vec::new();
+            for pt in points {
+                let found = [0.0, 0.05, 0.3].iter().find_map(|d| match super::face::face_at_state(&state, *pt - ax * *d, None) {
+                    Ok(Some(hit)) => Some(hit),
+                    _ => None,
+                });
+                let Some((mesh, face, _, _)) = found else { return Err(bad(cmd, format!("no edge near {pt:?}"))) };
+                // The face's edge nearest the point is the one clicked.
+                let near = mesh
+                    .face_edges(face)
+                    .into_iter()
+                    .filter_map(|e| mesh.edges.get(e))
+                    .min_by(|x, y| polyline_distance(x, *pt).total_cmp(&polyline_distance(y, *pt)))
+                    .ok_or_else(|| bad(cmd, format!("no edge near {pt:?}")))?;
+                rails.push(near.iter().map(|p| to_op(*p)).collect());
+            }
+            let mut b = rails.pop().unwrap_or_default();
+            let a = rails.pop().unwrap_or_default();
+            same_way(&a, &mut b);
+            g.chain_a = a;
+            g.chain_b = b;
         }
         Geometry::Holes { points, diameter } => {
             let state = s.model.state();
@@ -2827,9 +3044,23 @@ fn toolpath(s: &mut Session, p: &Value) -> Result<Value> {
     }))
 }
 
+/// Generates the setup's enabled operations that have no toolpath yet (new, or made stale by a
+/// change), so a simulation never skips one. A failure stays on that operation's own notice.
+fn generate_missing(s: &mut Session, setup: u64) {
+    let missing = s
+        .doc
+        .manufacture
+        .setup(setup)
+        .is_some_and(|st| st.operations.iter().any(|o| o.enabled && !s.cam.operations.contains_key(&o.id)));
+    if missing {
+        let _ = generate(s, &json!({"setup": setup}));
+    }
+}
+
 fn simulate(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "cam.simulate";
     let id = setup_param(s, p, cmd)?;
+    generate_missing(s, id);
     let st = s.doc.manufacture.setup(id).cloned().ok_or_else(|| bad(cmd, format!("no setup {id}")))?;
     let tol = num(p, "tolerance").unwrap_or(0.05).clamp(0.005, 5.0);
     let meshes = setup_meshes(s, &st, tol, false)?;
@@ -3025,6 +3256,7 @@ fn sim_program(s: &Session, st: &Setup) -> Result<(Vec<cam::simulate::SimOperati
 fn simulate_show(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "cam.simulate.show";
     let id = setup_param(s, p, cmd)?;
+    generate_missing(s, id);
     let st = s.doc.manufacture.setup(id).cloned().ok_or_else(|| bad(cmd, format!("no setup {id}")))?;
     let (ops, stamp, missing) = sim_program(s, &st)?;
     if ops.is_empty() {

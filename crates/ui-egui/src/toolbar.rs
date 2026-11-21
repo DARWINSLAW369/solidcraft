@@ -1421,6 +1421,8 @@ fn ribbon_contents(app: &mut SolveApp, ui: &mut egui::Ui, shape: RibbonShape) ->
         // Every panel with all its buttons (the user's pins have no cap); a toolbar too narrow
         // for them narrows the buttons, then trims panels into their drop-down and the » menu.
         let editing_in_place = app.edit_in_place.active.is_some();
+        // Preferences ▸ Names, for every caption drawn this frame.
+        solidcraft_ui_text::names::set(&app.preferences.names);
         let lists: Vec<_> = crate::toolbar_custom::panel_lists(&tab)
             .into_iter()
             .filter(|(panel, _, _)| editing_in_place || !(tab == "MODEL" && *panel == "FINISH EDITING"))
@@ -1473,11 +1475,18 @@ fn ribbon_contents(app: &mut SolveApp, ui: &mut egui::Ui, shape: RibbonShape) ->
             };
             ribbon::show(ui, &row, Rect::from_min_max(pos2(ribbon_left, top), r.max), &mut more_rows)
         };
+        // On the Manufacture tab, the operations that fit what the pointer is on in the model
+        // (a floor, a wall, an edge, a hole, a curved face) are outlined.
+        let fits: &[&str] = if tab == "MANUFACTURE" { hover_ops(app) } else { &[] };
+        let fit_accent = crate::workspace::tab_accent(&t, &tab);
         // The app's part of each button: its hover text, drags, the search's preview, deferred
         // persistent paint and a family's variants menu.
         for d in &mut out.buttons {
             let deferred = d.deferred.take();
             let Some(b) = panels.panel_button(d) else { continue };
+            if fits.contains(&b.selected.id) {
+                ribbon::paint_reveal(ui.painter(), d.whole, &fit_accent, 1.0, false);
+            }
             let resp = &d.response;
             if let Some(r) = reveal.as_ref().filter(|r| r.preview) {
                 if d.cell {
@@ -1508,6 +1517,17 @@ fn ribbon_contents(app: &mut SolveApp, ui: &mut egui::Ui, shape: RibbonShape) ->
                     let width = dropdown_width(app, ui, &variants);
                     sketch_menu_rows(app, ui, &variants, width, &mut menu, &mut toggle);
                 });
+            }
+        }
+        // A fitting operation that is only in a panel's drop-down (not a button on the row): the
+        // panel's label is outlined, so its menu is where to look.
+        if !fits.is_empty() {
+            for g in &out.groups {
+                let Some((_, cmds, shown)) = lists.get(g.group) else { continue };
+                let on_row: Vec<&str> = shown.iter().take(g.buttons).map(|c| c.id).collect();
+                if cmds.iter().any(|c| fits.contains(&c.id) && !on_row.contains(&c.id)) {
+                    ribbon::paint_reveal(ui.painter(), g.label, &fit_accent, 1.0, false);
+                }
             }
         }
         // What was chosen on the row, in order.
@@ -1690,7 +1710,11 @@ fn ribbon_contents(app: &mut SolveApp, ui: &mut egui::Ui, shape: RibbonShape) ->
                                     }
                                     let pinned = crate::toolbar_custom::pinned_on(app, &tab, c.id).is_some();
                                     let revealed = reveal.as_ref().is_some_and(|r| r.id == c.id);
-                                    match dropdown_row(app, ui, c, row_w, pinned, revealed.then_some(pulse)) {
+                                    // An operation that fits what the pointer was last on in the
+                                    // model is marked in the menu too.
+                                    let fit = fits.contains(&c.id);
+                                    let mark = if revealed { Some(pulse) } else if fit { Some(FIT_MARK) } else { None };
+                                    match dropdown_row(app, ui, c, row_w, pinned, mark) {
                                         None => {}
                                         Some(ribbon::MenuAction::Menu(at)) => menu = Some((at, c.id)),
                                         Some(ribbon::MenuAction::TogglePin) => toggle = Some(c.id),
@@ -1899,7 +1923,8 @@ fn dropdown_checkable(app: &SolveApp, id: &str) -> bool {
 impl RowData {
     fn new(app: &SolveApp, c: &'static solidcraft_engine::CommandSpec) -> Self {
         let info = crate::render_workspace::interactive_command_info(app, c);
-        let label = app.tr_label(info.label).to_string();
+        // Preferences ▸ Names: the shop's or Fusion's words for the command.
+        let label = solidcraft_ui_text::names::command(c.id).map_or_else(|| app.tr_label(info.label).to_string(), str::to_string);
         let checked = if c.id == "view.shots_strip" {
             Some(app.preferences.render_shots_strip)
         } else {
@@ -1950,7 +1975,8 @@ fn dropdown_row(
 ) -> Option<ribbon::MenuAction> {
     let row = RowData::new(app, c);
     let (action, resp) = ribbon::menu_row(ui, &row.entry(c, pinned), width, revealed, &menu_style(app));
-    if revealed.is_some() {
+    // The search's reveal opens the row's tooltip; marking what fits the model does not.
+    if revealed.is_some_and(|s| s != FIT_MARK) {
         reveal_tooltip(app, ui, resp.rect, c, egui::RectAlign::RIGHT_START);
     }
     action
@@ -2110,6 +2136,162 @@ fn ribbon_tooltip(app: &SolveApp, response: egui::Response, command: &solidcraft
         if let Some(reason) = disabled {
             ui.add(egui::Label::new(egui::RichText::new(app.tr_label(reason)).color(t.text_dim)).wrap());
         }
+    })
+}
+
+/// How strongly a drop-down row that fits what the pointer is on in the model is marked (any
+/// other strength is the command search's reveal).
+const FIT_MARK: f32 = 0.85;
+
+/// What the pointer is on in the model, for the operations that fit it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum HoverShape {
+    /// The part's top: faced off.
+    Top,
+    /// A level face below the top, facing up: a pocket's or a step's floor.
+    Floor,
+    /// A wall standing on a floor inside the part (a pocket's, a step's).
+    Wall,
+    /// A wall standing on the part's bottom: the outside, cut by a contour.
+    OutsideWall,
+    /// An edge of a pocket (inside the part).
+    Edge,
+    /// An edge of the outside (of an outside wall or a boss).
+    OutsideEdge,
+    /// A round hole (its wall or its rim).
+    Hole,
+    /// A round boss standing up: the outside of a cylinder.
+    Boss,
+    Curved,
+}
+
+/// The operations that fit what the pointer is on in the model (none when it is on nothing).
+fn hover_ops(app: &SolveApp) -> &'static [&'static str] {
+    match hover_shape(app) {
+        Some(HoverShape::Top) => &["cam.operation.face"],
+        Some(HoverShape::Floor) => &["cam.operation.pocket2d", "cam.operation.adaptive2d"],
+        Some(HoverShape::Wall) => &["cam.operation.pocket2d", "cam.operation.contour2d", "cam.operation.chamfer2d", "cam.operation.swarf"],
+        Some(HoverShape::OutsideWall) => &["cam.operation.contour2d", "cam.operation.chamfer2d", "cam.operation.swarf"],
+        Some(HoverShape::Edge) => &["cam.operation.chamfer2d", "cam.operation.pocket2d", "cam.operation.flow", "cam.operation.morph"],
+        Some(HoverShape::OutsideEdge) => &["cam.operation.chamfer2d", "cam.operation.contour2d", "cam.operation.flow", "cam.operation.morph"],
+        Some(HoverShape::Hole) => &["cam.operation.drill", "cam.operation.bore", "cam.operation.circular", "cam.operation.thread"],
+        Some(HoverShape::Boss) => &["cam.operation.contour2d", "cam.operation.chamfer2d"],
+        Some(HoverShape::Curved) => &[
+            "cam.operation.pocket3d",
+            "cam.operation.adaptive3d",
+            "cam.operation.parallel",
+            "cam.operation.scallop",
+            "cam.operation.contour3d",
+            "cam.operation.multi_axis_contour",
+            "cam.operation.flow",
+        ],
+        None => &[],
+    }
+}
+
+/// What the pointer is on in the model: a level face, a wall, an edge, a hole or a curved face.
+/// Off the view (on the ribbon, a menu or a form) it is what the pointer was last on there, so a
+/// drop-down opened from the ribbon still marks what fits; pointing at nothing in the view clears it.
+pub(crate) fn hover_shape(app: &SolveApp) -> Option<HoverShape> {
+    thread_local! {
+        static STICKY: std::cell::Cell<Option<HoverShape>> = const { std::cell::Cell::new(None) };
+    }
+    let now = hover_shape_now(app);
+    STICKY.with(|sticky| {
+        if now.is_some() {
+            sticky.set(now);
+            now
+        } else if app.viewport.mouse.is_none() {
+            sticky.get()
+        } else {
+            sticky.set(None);
+            None
+        }
+    })
+}
+
+fn hover_shape_now(app: &SolveApp) -> Option<HoverShape> {
+    use crate::viewport::Hit;
+    use solidcraft_engine::kernel::{self, FaceSurface};
+    use solidcraft_viewport::vec::Vec3Ops as _;
+    // The last face's shape, kept: working it out every frame would cost.
+    thread_local! {
+        static LAST: std::cell::RefCell<Option<((String, usize, bool), Option<HoverShape>)>> = const { std::cell::RefCell::new(None) };
+    }
+    // (body, face or edge index, is an edge)
+    let key = match &app.viewport.hover {
+        Some(Hit::Face { body, index, .. }) => (body.clone(), *index, false),
+        Some(Hit::Edge { body, index, .. }) => (body.clone(), *index, true),
+        _ => return None,
+    };
+    LAST.with(|last| {
+        if let Some((k, s)) = last.borrow().as_ref()
+            && *k == key
+        {
+            return *s;
+        }
+        let st = crate::open_meshing::session_world(&app.session);
+        let s = st.body(&key.0).and_then(|b| {
+            let mesh = b.mesh();
+            let surface = |f: usize| kernel::guard("hover shape", || Ok(kernel::face_surface(&b.body, f))).ok().flatten();
+            let top_z = mesh.positions.iter().map(|p| p.z).fold(f64::NEG_INFINITY, f64::max);
+            // A wall standing on the part's bottom (a face below it that faces down) is the
+            // outside: a contour, not a pocket.
+            let stands_on_bottom = |f: usize| {
+                let edges = mesh.face_edges(f as u32);
+                let low = |e: &usize| mesh.edges.get(*e).map_or(f64::INFINITY, |pl| pl.iter().map(|p| p.z).fold(f64::INFINITY, f64::min));
+                let bottom = edges.iter().map(low).fold(f64::INFINITY, f64::min);
+                edges
+                    .iter()
+                    .filter(|e| (low(e) - bottom).abs() < 1e-3)
+                    .flat_map(|e| mesh.edge_faces.get(*e).cloned().unwrap_or_default())
+                    .filter(|g| *g as usize != f)
+                    .any(|g| matches!(surface(g as usize), Some(FaceSurface::Plane { normal, .. }) if normal.vec().z < -0.99))
+            };
+            // A cylinder's outside (a boss) has its normals pointing away from its axis; a hole's
+            // point towards it.
+            let convex = |f: usize, origin: solidcore_record::Vec3, axis: solidcore_record::Vec3| {
+                mesh.triangles.iter().zip(&mesh.tri_face).find(|(_, g)| **g as usize == f).and_then(|(t, _)| {
+                    let i = t[0] as usize;
+                    let (p, n) = (*mesh.positions.get(i)?, *mesh.normals.get(i)?);
+                    let d = p - origin;
+                    let radial = d - axis * d.dot(axis);
+                    Some(radial.dot(n) > 0.0)
+                })
+            };
+            let face_shape = |f: usize| -> Option<HoverShape> {
+                Some(match surface(f)? {
+                    FaceSurface::Plane { normal, point } => {
+                        let z = normal.vec().z;
+                        if z > 0.99 {
+                            if (point.z - top_z).abs() < 1e-3 { HoverShape::Top } else { HoverShape::Floor }
+                        } else if z.abs() < 0.1 {
+                            if stands_on_bottom(f) { HoverShape::OutsideWall } else { HoverShape::Wall }
+                        } else {
+                            HoverShape::Curved
+                        }
+                    }
+                    FaceSurface::Cylinder { origin, axis, .. } if axis.vec().z.abs() > 0.99 => {
+                        if convex(f, origin, axis.vec()) == Some(true) { HoverShape::Boss } else { HoverShape::Hole }
+                    }
+                    _ => HoverShape::Curved,
+                })
+            };
+            if !key.2 {
+                return face_shape(key.1);
+            }
+            // An edge is what the faces it joins are: a hole's rim, the outside's, or a pocket's.
+            let shapes: Vec<HoverShape> = mesh.edge_faces.get(key.1).cloned().unwrap_or_default().into_iter().filter_map(|f| face_shape(f as usize)).collect();
+            Some(if shapes.contains(&HoverShape::Hole) {
+                HoverShape::Hole
+            } else if shapes.iter().any(|s| matches!(s, HoverShape::OutsideWall | HoverShape::Boss)) {
+                HoverShape::OutsideEdge
+            } else {
+                HoverShape::Edge
+            })
+        });
+        *last.borrow_mut() = Some((key.clone(), s));
+        s
     })
 }
 
