@@ -1,6 +1,6 @@
 # SolidCraft CAM: from a model to G-code
 
-Version 17 of this fork. A printable copy with the same pictures: [SolidCraft CAM - How To.pdf](SolidCraft%20CAM%20-%20How%20To.pdf).
+Version 18 of this fork. A printable copy with the same pictures: [SolidCraft CAM - How To.pdf](SolidCraft%20CAM%20-%20How%20To.pdf).
 
 You already drew the part. The CAM uses your geometry: you click what you see (the floor of a pocket, a wall, a hole, an edge) and it works out the outline and the depth. Every number it uses is one you can see and change. It never guesses speeds and feeds for you; you set those for your machine.
 
@@ -18,6 +18,8 @@ Open or draw your part. Top left, click the workspace button and pick **Manufact
 2. **Click 2:** your zero, the point you touch off at the machine. Corners, edge middles, face centres and holes light up on the part and on the stock as you move the mouse.
 
 The stock is a box around the part with the same margin on every side (1 mm to start). Change that one number for a bigger blank. Round stock, a fixed size or the machine are under **Advanced**.
+
+Your first setup starts on the machine named in **Preferences › General › Default machine**. Pick yours once and every new job starts on it.
 
 ![Click 1: the face that points up](img/02-setup-click-top.png)
 
@@ -75,7 +77,7 @@ Need the full form (leads and ramps, Safe Z, passes, tabs, tolerance)? Press **A
 - Click **Simulate**. Anything not made yet is made first.
 - Use **1×** or **Move ›** to watch drilling pecks one by one.
 - **Red** in the simulation means cutting into the part as drawn (a chamfer you didn't draw on the model shows red; draw it and the red goes).
-- **Yellow** operation = a warning, not an error (most often: the setup's machine has no limits set). **Red** operation = it couldn't be made; open it to see why.
+- **Yellow** operation = a warning, not an error; open it to read it. **Red** operation = it couldn't be made; open it to see why. (A machine with no limits set is only a grey note.)
 - Close the simulation to see your model again. The CAM never changes the model.
 
 ![The stock after the pocket, the drilling and the chamfer](img/10-simulate.png)
@@ -83,6 +85,8 @@ Need the full form (leads and ramps, Safe Z, passes, tabs, tolerance)? Press **A
 ## 6. Make the G-code [Post Process]
 
 Click **Make G-code**, pick your post processor (**Mach3** for .tap files) and save. The Mach3 post does manual tool changes, peck drilling and the A axis for rotary.
+
+**Group by tool** (ticked for machines with manual tool changes): each tool's operations are posted together, so you change tools as few times as possible. An operation still waits for another tool's operation that cut the same spot first, so a pocket stays before the hole through its floor and roughing before finishing. The notice lists the order it posted in. Untick it to post in the Browser's order.
 
 ![Post Program form](img/11-make-gcode.png)
 
