@@ -1558,3 +1558,44 @@ fn a_loop_that_doubles_back_in_a_tiny_zigzag_still_offsets_inward() {
     let fam = inward_family(&[sq], 1.0, 0.01, 100).unwrap();
     assert!(fam.len() > 5, "{}", fam.len());
 }
+
+/// Group by tool: each tool's operations together, unless one cuts where an earlier operation of
+/// another tool cut first (then the order stays).
+#[test]
+fn group_by_tool_saves_changes_and_keeps_orders_that_matter() {
+    let t1 = flat(6.0);
+    let mut t2 = flat(3.0);
+    t2.number = 2;
+    let line = |x0: f64, x1: f64, z: f64| {
+        let mut tp = Toolpath::new();
+        tp.rapid(Vec3::new(x0, 5.0, 10.0)).unwrap();
+        tp.push(crate::toolpath::Move::new(MoveKind::Plunge, Vec3::new(x0, 5.0, z), 200.0)).unwrap();
+        tp.cut(Vec3::new(x1, 5.0, z), 500.0).unwrap();
+        tp
+    };
+    let pocket = line(0.0, 10.0, -3.0); // T1, left
+    let hole = {
+        let mut tp = Toolpath::new();
+        tp.rapid(Vec3::new(5.0, 5.0, 10.0)).unwrap();
+        tp.push(crate::toolpath::Move::new(MoveKind::Plunge, Vec3::new(5.0, 5.0, -10.0), 200.0)).unwrap();
+        tp
+    }; // T2, through the pocket's floor
+    let profile = line(40.0, 50.0, -5.0); // T1, right
+    let finish = line(40.0, 50.0, -5.0); // T2, the same place as the profile
+    let ops = [
+        PostOperation { name: "pocket", tool: &t1, toolpath: &pocket },
+        PostOperation { name: "hole", tool: &t2, toolpath: &hole },
+        PostOperation { name: "profile", tool: &t1, toolpath: &profile },
+        PostOperation { name: "finish", tool: &t2, toolpath: &finish },
+    ];
+    // The profile moves up beside the pocket (it cuts nowhere the hole did); the hole still
+    // follows the pocket and the finish the profile.
+    assert_eq!(crate::post::group_by_tool(&ops), vec![0, 2, 1, 3]);
+    // T1, T2, T1 all in one place: nothing can move.
+    let same = [
+        PostOperation { name: "rough", tool: &t1, toolpath: &profile },
+        PostOperation { name: "semi", tool: &t2, toolpath: &finish },
+        PostOperation { name: "finish", tool: &t1, toolpath: &profile },
+    ];
+    assert_eq!(crate::post::group_by_tool(&same), vec![0, 1, 2]);
+}

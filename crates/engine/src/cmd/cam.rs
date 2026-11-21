@@ -327,7 +327,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .noundo(),
     CommandSpec::new("cam.post", "Post Process", post).at("MANUFACTURE", "TOOLPATHS")
         .icon("cam_post")
-        .params("setup?: id (default the only setup); post?: generic | grbl | fiveaxis | makera (default the machine's own post, else by its axes); path?: write the G-code here (.nc); program?: name; line_numbers?: increment; canned_cycles?: bool: writes the setup's program through the machine's kinematics. Returns the G-code (when under 2 MB), line count and notice")
+        .params("setup?: id (default the only setup); post?: generic | grbl | fiveaxis | makera (default the machine's own post, else by its axes); path?: write the G-code here (.nc); program?: name; line_numbers?: increment; canned_cycles?: bool; group_by_tool?: bool (default on for manual tool changes: posts each tool's operations together, keeping any order where one cuts where an earlier one of another tool cut): writes the setup's program through the machine's kinematics. Returns the G-code (when under 2 MB), line count and notice")
         .noundo(),
     CommandSpec::new("cam.simulate.show", "Show Simulation", simulate_show).at("MANUFACTURE", "TOOLPATHS")
         .icon("cam_simulate_show")
@@ -3189,10 +3189,29 @@ fn post(s: &mut Session, p: &Value) -> Result<Value> {
     if held.is_empty() {
         return Err(bad(cmd, "nothing to post: run cam.generate first"));
     }
-    let ops: Vec<cam::post::PostOperation> = held.iter().map(|(n, t, tp)| cam::post::PostOperation { name: n, tool: t, toolpath: tp }).collect();
+    let mut ops: Vec<cam::post::PostOperation> =
+        held.iter().map(|(n, t, tp)| cam::post::PostOperation { name: n, tool: t, toolpath: tp }).collect();
+    // Group by tool: on by default where a person changes the tools by hand.
+    let manual = st.machine.tool_changer == cam::machine::ToolChanger::Manual;
+    let grouped = bool_(p, "group_by_tool").unwrap_or(manual);
+    let mut reordered: Option<Vec<String>> = None;
+    if grouped && ops.len() > 1 {
+        let order = cam::post::group_by_tool(&ops);
+        if order.iter().enumerate().any(|(k, i)| k != *i) {
+            reordered = Some(order.iter().map(|&i| ops[i].name.to_string()).collect());
+            let mut taken: Vec<Option<cam::post::PostOperation>> = ops.into_iter().map(Some).collect();
+            ops = order.iter().map(|&i| taken[i].take().expect("each operation once")).collect();
+        }
+    }
     let tol = st.operations.iter().map(|o| o.tolerance).fold(0.01, f64::min);
     let prog = cam::post::post_program(&post, &st.machine, &program, &ops, tol).map_err(|e| engine_err(cmd, e))?;
     let mut notice = prog.notice.clone();
+    if let Some(names) = &reordered {
+        notice.issue(Issue::info(
+            "grouped_by_tool",
+            format!("grouped by tool to save tool changes; posted in this order: {}", names.join(", ")),
+        ));
+    }
     if !missing.is_empty() {
         notice.issue(
             Issue::warning("not_generated", format!("{} operation(s) were left out: no toolpath yet", missing.len()))

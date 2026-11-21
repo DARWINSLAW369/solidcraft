@@ -59,6 +59,30 @@ pub(super) fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                         });
                     });
                 });
+                // The machine a first CAM setup starts on: a pick from the known machines
+                // (the design's own machine files and the built-in ones), no typing.
+                ui_kit::row(ui, "Default machine", |ui| {
+                    ui_kit::settings_control_width(ui, t.space_24 * 11.0 + t.space_16, |ui| {
+                        let known = solidcraft_engine::cmd::cam::known_machines(&app.session);
+                        let name_of = |id: &str| {
+                            if id.is_empty() {
+                                "Generic (no limits)".to_string()
+                            } else {
+                                known.iter().find(|e| e.id == id).map_or_else(|| id.to_string(), |e| e.machine.name.clone())
+                            }
+                        };
+                        let now = name_of(&app.preferences.default_machine);
+                        let mut ids: Vec<String> = vec![String::new()];
+                        ids.extend(known.iter().map(|e| e.id.clone()));
+                        ui_kit::dropdown_menu(ui, "pref_default_machine", &now, |ui| {
+                            for id in &ids {
+                                if ui_kit::list_picker(ui, id.as_str(), &name_of(id), app.preferences.default_machine == *id).clicked() {
+                                    app.preferences.default_machine = id.clone();
+                                }
+                            }
+                        });
+                    });
+                });
             });
         });
         ui_kit::settings_section(ui, "saving", app.tr("prefs.saving"), |ui| {

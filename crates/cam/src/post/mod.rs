@@ -655,3 +655,70 @@ pub fn post_program(post: &Post, machine: &Machine, program_name: &str, ops: &[P
 fn tool_kind_name(t: &Tool) -> &'static str {
     t.kind.label()
 }
+
+/// The order to post `ops` in so each tool is loaded as few times as it can be: the operations
+/// of the loaded tool go first, as long as nothing they cut was meant to be cut first by an
+/// earlier operation of another tool (a pocket before a hole through its floor, roughing before
+/// finishing the same area). Two operations depend on each other when the spaces their tools
+/// sweep through share a cell. Same-tool operations keep their order. Returns indices into `ops`.
+pub fn group_by_tool(ops: &[PostOperation]) -> Vec<usize> {
+    use std::collections::HashSet;
+    const CELL: f64 = 2.0;
+    let key = |p: Vec3| ((p.x / CELL).floor() as i64, (p.y / CELL).floor() as i64, (p.z / CELL).floor() as i64);
+    // The cells each operation's cutting moves (and drilling cycles) pass through, widened by the
+    // tool's radius.
+    let swept: Vec<HashSet<(i64, i64, i64)>> = ops
+        .iter()
+        .map(|op| {
+            let tp = op.toolpath;
+            let reach = ((op.tool.diameter * 0.5 / CELL).ceil() as i64).clamp(0, 4);
+            let mut centres: HashSet<(i64, i64, i64)> = HashSet::new();
+            let mut add_line = |a: Vec3, b: Vec3| {
+                let n = (((b - a).len() / CELL).ceil() as usize).clamp(1, 100_000);
+                for i in 0..=n {
+                    centres.insert(key(a + (b - a) * (i as f64 / n as f64)));
+                }
+            };
+            let mut prev: Option<Vec3> = None;
+            for m in &tp.moves {
+                if let Some(a) = prev
+                    && m.kind != MoveKind::Rapid
+                {
+                    add_line(a, m.to);
+                }
+                prev = Some(m.to);
+            }
+            for c in &tp.cycles {
+                add_line(c.top, c.top - Vec3::new(0.0, 0.0, c.depth));
+            }
+            let mut cells = HashSet::new();
+            for (x, y, z) in centres {
+                for dx in -reach..=reach {
+                    for dy in -reach..=reach {
+                        cells.insert((x + dx, y + dy, z));
+                    }
+                }
+            }
+            cells
+        })
+        .collect();
+    let n = ops.len();
+    // before[j]: the earlier operations j must wait for.
+    let before: Vec<Vec<usize>> = (0..n)
+        .map(|j| (0..j).filter(|&i| ops[i].tool.number == ops[j].tool.number || !swept[i].is_disjoint(&swept[j])).collect())
+        .collect();
+    let mut done = vec![false; n];
+    let mut order = Vec::with_capacity(n);
+    let mut loaded = ops.first().map(|o| o.tool.number);
+    while order.len() < n {
+        let ready = |j: usize, done: &[bool]| !done[j] && before[j].iter().all(|&i| done[i]);
+        let next = (0..n)
+            .find(|&j| ready(j, &done) && Some(ops[j].tool.number) == loaded)
+            .or_else(|| (0..n).find(|&j| ready(j, &done)))
+            .expect("the earliest operation left always has its earlier ones done");
+        done[next] = true;
+        loaded = Some(ops[next].tool.number);
+        order.push(next);
+    }
+    order
+}

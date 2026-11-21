@@ -476,7 +476,16 @@ pub fn open_new_setup(app: &mut SolveApp) {
         fixtures: Vec::new(),
         wcs: cam::frame::Frame::IDENTITY,
         stock: if before.is_some() { cam::setup::Stock::FromSetup { setup: 0 } } else { cam::setup::Stock::default() },
-        machine: before.map_or_else(cam::machine::Machine::three_axis, |b| b.machine.clone()),
+        machine: before.map_or_else(
+            || {
+                let id = &app.preferences.default_machine;
+                solidcraft_engine::cmd::cam::known_machines(&app.session)
+                    .into_iter()
+                    .find(|e| !id.is_empty() && e.id == *id)
+                    .map_or_else(cam::machine::Machine::three_axis, |e| e.machine)
+            },
+            |b| b.machine.clone(),
+        ),
         operations: Vec::new(),
         program: String::new(),
     };
@@ -505,7 +514,13 @@ pub fn open_quick_setup(app: &mut SolveApp, setup: Option<u64>) {
         Some(id) => id,
         None => {
             let first = app.session.doc.manufacture.setups.is_empty();
-            let params = if first { json!({"stock": margin_stock(QUICK_MARGIN)}) } else { json!({}) };
+            let mut params = if first { json!({"stock": margin_stock(QUICK_MARGIN)}) } else { json!({}) };
+            // The first setup starts on the machine Preferences names (a later one carries the
+            // setup before's over).
+            let default_machine = app.preferences.default_machine.clone();
+            if first && !default_machine.is_empty() {
+                params["machine"] = json!(default_machine);
+            }
             match app.run("cam.setup.create", params) {
                 Ok(v) => match v["id"].as_u64() {
                     Some(id) => id,
@@ -724,6 +739,8 @@ fn quick_rows(ui: &mut egui::Ui, op: &mut Map<String, Value>, inputs: &mut Input
     let choices = cam::ops::OpKind::choices(&ty);
     let from = cam::ops::variants::<cam::linking::HeightRef>(Value::Null);
     for (key, label) in keys {
+        // Preferences ▸ Names: the hover box says it in the chosen words, as the full form does.
+        let label = solidcraft_ui_text::names::cam(label);
         match key.strip_prefix("heights.") {
             Some(h) => {
                 if let Some(Value::Object(hs)) = op.get_mut("heights")
@@ -893,6 +910,7 @@ pub fn open_post(app: &mut SolveApp, setup: Option<u64>) {
         "program": program,
         "line_numbers": 0,
         "canned_cycles": true,
+        "group_by_tool": st.machine.tool_changer == cam::machine::ToolChanger::Manual,
     });
     app.cam_editor = Some(CamEditor::new(Target::Run("cam.post"), params));
 }

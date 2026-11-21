@@ -295,9 +295,11 @@ impl Machine {
         self.work_area.x > 0.0 && self.work_area.y > 0.0 && (self.spindle_rpm_max > 0.0 || self.laser.is_some())
     }
 
-    /// The issue every result carries while the machine is not known.
+    /// The issue every result carries while the machine is not known. It is information, not a
+    /// warning: it says nothing about the operation itself, so it must not mark every good
+    /// operation in yellow. (Posting still asks for a named machine.)
     pub fn unknown_issue(&self) -> crate::notice::Issue {
-        crate::notice::Issue::warning(
+        crate::notice::Issue::info(
             "machine_unknown",
             format!(
                 "the setup's machine ({}) has no limits, so nothing was checked against travel, spindle speed, feeds, collets or the gantry; name the machine",

@@ -2082,7 +2082,9 @@ fn ribbon_tooltip(app: &SolveApp, response: egui::Response, command: &solidcraft
     }
     response.backing_on_hover_ui(|ui| {
         let t = Tokens::get();
-        let name = app.tr_label(crate::render_workspace::interactive_command_info(app, command).label);
+        // Preferences ▸ Names: the tooltip names the command as its button does.
+        let name = solidcraft_ui_text::names::command(command.id)
+            .unwrap_or_else(|| app.tr_label(crate::render_workspace::interactive_command_info(app, command).label));
         let name_width = ui
             .painter()
             .layout_no_wrap(name.to_string(), crate::ui_kit::type_face::semibold(solidcraft_theme::Tokens::get().font_heading), t.text)
