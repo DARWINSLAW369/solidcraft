@@ -1,6 +1,6 @@
 # SolidCraft CAM: from a model to G-code
 
-Version 18 of this fork. A printable copy with the same pictures: [SolidCraft CAM - How To.pdf](SolidCraft%20CAM%20-%20How%20To.pdf).
+Version 19 of this fork. A printable copy with the same pictures: [SolidCraft CAM - How To.pdf](SolidCraft%20CAM%20-%20How%20To.pdf).
 
 You already drew the part. The CAM uses your geometry: you click what you see (the floor of a pocket, a wall, a hole, an edge) and it works out the outline and the depth. Every number it uses is one you can see and change. It never guesses speeds and feeds for you; you set those for your machine.
 
@@ -36,7 +36,9 @@ Library tools are starting points. Set the diameter and shape to match your cutt
 
 ## 4. Add operations: click what you see
 
-Hover the part first. The buttons that fit what the mouse is on light up on the ribbon; if the fitting one is inside a dropdown, the dropdown's name lights up.
+**Fastest: click the feature first.** Click a floor, a wall, a hole, an edge or the top of the part. A small menu opens right there, listing every operation that fits it (Pocket for a floor, Profile for an outside wall, Drill for a hole, and so on), the ones hidden in dropdowns too. Pick one and it is made on that click.
+
+Or hover the part: the buttons that fit what the mouse is on light up on the ribbon; if the fitting one is inside a dropdown, the dropdown's name lights up.
 
 ![Mouse on the pocket floor: Pocket lights up](img/05-ribbon-hint-floor.png)
 
@@ -86,9 +88,15 @@ Need the full form (leads and ramps, Safe Z, passes, tabs, tolerance)? Press **A
 
 Click **Make G-code**, pick your post processor (**Mach3** for .tap files) and save. The Mach3 post does manual tool changes, peck drilling and the A axis for rotary.
 
-**Group by tool** (ticked for machines with manual tool changes): each tool's operations are posted together, so you change tools as few times as possible. An operation still waits for another tool's operation that cut the same spot first, so a pocket stays before the hole through its floor and roughing before finishing. The notice lists the order it posted in. Untick it to post in the Browser's order.
+**Group by tool** (ticked for machines with manual tool changes): sorts the operations in the Browser so each tool's come together, so you change tools as few times as possible. An operation still waits for another tool's operation that cut the same spot first, so a pocket stays before the hole through its floor and roughing before finishing. The list, the simulation and the G-code all run in that one order. There is also a **Group by Tool** button in the Toolpaths group to sort any time.
+
+Changed a tool or an operation? The toolpaths it affects are remade on their own; nothing waits for Make Toolpaths.
 
 ![Post Program form](img/11-make-gcode.png)
+
+## STL files
+
+STEP is best when you have it: it keeps the true curves. For an STL: **Model › Insert › Import STL**, then **Mesh to Solid** (next to Insert STEP, or right-click the mesh). It repairs the mesh first (duplicate triangles, small holes, inside out) and takes up to 200,000 triangles. A big, very curvy STL doesn't need to be a solid to machine: the 3D operations (Adaptive Roughing, Raster and Waterline Finish) cut it as it is.
 
 ## 7. At the machine
 
