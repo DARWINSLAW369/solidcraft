@@ -285,6 +285,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("cam_setup_create")
         .params("in the app: click the face that faces up, then the zero point (a corner, edge middle, face centre or hole of the model or the stock). Scripts use cam.setup.set with wcs and origin or origin_at")
         .noundo(),
+    CommandSpec::new("cam.setup.group_by_tool", "Group by Tool", setup_group_by_tool).at("MANUFACTURE", "TOOLPATHS").icon("cam_generate").params("setup?: id (default the only setup): reorders the setup's operations so each tool's operations come together (fewer tool changes), keeping any order where an operation cuts where an earlier one of another tool cut first (a pocket before the hole through its floor, roughing before finishing); the Browser, the simulation and the posted program then share that order. Makes missing toolpaths first and remakes the moved ones"),
     CommandSpec::new("cam.setup.set", "Edit Setup", setup_set).icon("cam").params("setup: id; any cam.setup.create field (flip: x | y turns the setup's WCS over, the origin at the stock's new front-left top corner): changes a setup; its toolpaths, and those of setups that carry its stock over, show as stale"),
     CommandSpec::new("cam.setup.remove", "Remove Setup", setup_remove).icon("cam").params("setup: id: removes a setup and its operations"),
     CommandSpec::new("cam.setup.list", "Setups", setup_list).icon("cam").params("lists the setups with their operations").noundo(),
@@ -3046,6 +3047,59 @@ fn toolpath(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// Generates the setup's enabled operations that have no toolpath yet (new, or made stale by a
 /// change), so a simulation never skips one. A failure stays on that operation's own notice.
+/// Group by Tool: the setup's operations reordered so each tool's come together, the way
+/// [`cam::post::group_by_tool`] orders them (an operation never moves ahead of an earlier one of
+/// another tool that cut the same space). Operations that are off or have no toolpath keep their
+/// places. The moved ones are remade.
+fn setup_group_by_tool(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "cam.setup.group_by_tool";
+    let id = setup_param(s, p, cmd)?;
+    generate_missing(s, id);
+    let st = s.doc.manufacture.setup(id).cloned().ok_or_else(|| bad(cmd, format!("no setup {id}")))?;
+    let mut items: Vec<(u64, Tool, Arc<Toolpath>)> = Vec::new();
+    for op in st.operations.iter().filter(|o| o.enabled) {
+        if let (Some(g), Some(t)) = (s.cam.operations.get(&op.id), s.doc.manufacture.tools.get(op.tool)) {
+            items.push((op.id, t.clone(), g.toolpath.clone()));
+        }
+    }
+    let ops: Vec<cam::post::PostOperation> = items.iter().map(|(_, t, tp)| cam::post::PostOperation { name: "", tool: t, toolpath: tp }).collect();
+    let order = cam::post::group_by_tool(&ops);
+    let grouped: Vec<u64> = order.iter().map(|&i| items[i].0).collect();
+    let mut next = grouped.iter();
+    let new_order: Vec<u64> =
+        st.operations.iter().map(|o| if items.iter().any(|x| x.0 == o.id) { *next.next().unwrap_or(&o.id) } else { o.id }).collect();
+    let old_order: Vec<u64> = st.operations.iter().map(|o| o.id).collect();
+    let changes = |ids: &[u64]| -> usize {
+        let tools: Vec<u32> =
+            ids.iter().filter_map(|i| items.iter().find(|x| x.0 == *i)).map(|x| x.1.number).collect();
+        tools.windows(2).filter(|w| w[0] != w[1]).count()
+    };
+    let (before, after) = (changes(&old_order), changes(&new_order));
+    let moved = new_order != old_order;
+    if moved {
+        if let Some(stm) = s.doc_mut().manufacture.setup_mut(id) {
+            let mut taken: Vec<Option<cam::setup::Operation>> = std::mem::take(&mut stm.operations).into_iter().map(Some).collect();
+            for oid in &new_order {
+                if let Some(slot) = taken.iter_mut().find(|o| o.as_ref().is_some_and(|o| o.id == *oid))
+                    && let Some(op) = slot.take()
+                {
+                    stm.operations.push(op);
+                }
+            }
+        }
+        // Each operation starts from the stock the ones before leave: remake them in the new order.
+        let _ = generate(s, &json!({"setup": id}));
+    }
+    let names: Vec<String> =
+        new_order.iter().filter_map(|i| s.doc.manufacture.operation(*i).map(|(_, o)| o.name.clone())).collect();
+    s.echo(if moved {
+        format!("Grouped by tool: {} (tool changes {before} → {after})", names.join(", "))
+    } else {
+        "Already grouped by tool: nothing moved".to_string()
+    });
+    Ok(json!({"setup": id, "moved": moved, "order": new_order, "names": names, "tool_changes_before": before, "tool_changes_after": after}))
+}
+
 fn generate_missing(s: &mut Session, setup: u64) {
     let missing = s
         .doc

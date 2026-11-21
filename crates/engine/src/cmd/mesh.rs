@@ -58,11 +58,18 @@ fn convert(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let tolerance = expr(p, "tolerance").unwrap_or_else(|| "0.05 mm".into());
     check_expr(s, &tolerance, Kind::Length, cmd, "tolerance")?;
+    // What the conversion repairs first (duplicates, holes, inside out), said in the result.
+    let repaired = solidcraft_kernel::mesh_repair_report(&source.body, 0.05).ok().filter(|r| !r.is_empty()).map(|r| r.describe());
     // Conversion edits the component definition, independent of its occurrence placement.
     let active_component = std::mem::replace(&mut s.active_component, owner);
     let active_occurrence_path = s.active_occurrence_path.take();
     let result = add_feature(s, p, FeatureKind::MeshConvert { body: body.into(), tolerance });
     s.active_component = active_component;
     s.active_occurrence_path = active_occurrence_path;
-    result
+    let mut result = result?;
+    if let (Some(text), Value::Object(o)) = (repaired, &mut result) {
+        s.echo(format!("Convert Mesh repaired the mesh first: {text}"));
+        o.insert("repaired".into(), Value::String(text));
+    }
+    Ok(result)
 }

@@ -10,7 +10,7 @@ use solidcore_record::{Loop2, Plane, Region2, Vec2, Vec3};
 
 use crate::{Body, EdgeSpec, FaceSpec, KernelError, Result, SurfSpec, sew_touching};
 
-const MAX_TRIANGLES: usize = 50_000;
+const MAX_TRIANGLES: usize = 200_000;
 const MAX_BOUNDARY: usize = 8192;
 /// Nesting certification runs two planar booleans per pair of boundary loops,
 /// so the loop count (not the segment count) bounds its cost: 50 loops (an
@@ -28,7 +28,7 @@ fn invalid(message: &str) -> KernelError {
 
 /// A mesh over the triangle budget: how big it is and the limit (#346).
 fn over_budget(triangles: usize) -> KernelError {
-    invalid(&format!("the mesh has {triangles} triangles, more than the {MAX_TRIANGLES} conversion can take"))
+    invalid(&format!("the mesh has {triangles} triangles, more than the {MAX_TRIANGLES} conversion can take (each curved triangle would become a face of its own). To machine it, the 3D operations cut the mesh as it is; to edit it, import the part as STEP if you have one"))
 }
 
 /// Reconstruct a constant-section mesh as analytic planes and, where certified within
@@ -42,7 +42,11 @@ pub fn convert_prismatic_mesh(body: &Body, tolerance: f64) -> Result<Body> {
         }
         let input = body.mesh.as_ref().ok_or_else(|| invalid("select a mesh body"))?;
         let welded = weld(input, tolerance)?;
-        let mesh = welded.mesh.as_ref().ok_or_else(|| invalid("empty mesh"))?;
+        let welded = welded.mesh.as_ref().ok_or_else(|| invalid("empty mesh"))?;
+        // The usual faults of an STL out in the world (duplicated or backwards triangles, small
+        // holes, inside out) are repaired first; what cannot be repaired is still refused below.
+        let (repaired, _) = repair(welded)?;
+        let mesh = repaired.mesh.as_ref().ok_or_else(|| invalid("empty mesh"))?;
         if mesh.triangles.len() > MAX_TRIANGLES {
             return Err(over_budget(mesh.triangles.len()));
         }
@@ -69,8 +73,13 @@ pub fn convert_prismatic_mesh(body: &Body, tolerance: f64) -> Result<Body> {
             let entry = axes.entry(key).or_insert((n, 0.));
             entry.1 += cross.len();
         }
+        if edges.values().any(|&(count, _)| count > 2) {
+            return Err(invalid(
+                "the mesh has edges shared by more than two triangles (parts that overlap or touch at an edge), so it is not one closed solid",
+            ));
+        }
         if edges.values().any(|&(count, balance)| count != 2 || balance != 0) {
-            return Err(invalid("mesh must be closed and consistently oriented, with two triangles per edge"));
+            return Err(invalid("the mesh has holes or twisted triangles that could not be repaired, so it is not one closed solid"));
         }
         let mut axes: Vec<_> = axes.into_values().collect();
         axes.sort_by(|a, b| b.1.total_cmp(&a.1));
@@ -115,7 +124,7 @@ fn weld(mesh: &crate::meshbody::TriMesh, tolerance: f64) -> Result<Body> {
                 for dz in -1..=1 {
                     for &i in grid.get(&(k.0 + dx, k.1 + dy, k.2 + dz)).into_iter().flatten() {
                         comparisons += 1;
-                        if comparisons > 8_000_000 {
+                        if comparisons > 40_000_000 {
                             return Err(invalid("vertex welding exceeds its work budget"));
                         }
                         if positions.get(i as usize).is_some_and(|q| q.dist(p) <= epsilon) {
@@ -170,6 +179,203 @@ fn weld(mesh: &crate::meshbody::TriMesh, tolerance: f64) -> Result<Body> {
         return Err(invalid("the mesh has no triangle of any area"));
     }
     crate::mesh_body(&kept_positions, &triangles)
+}
+
+/// What [`repair`] changed in a mesh before conversion.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MeshRepair {
+    /// Triangles that were exact copies of another and were dropped.
+    pub duplicates: usize,
+    /// Triangles turned round to face the same way as their neighbours.
+    pub flipped: usize,
+    /// Holes closed, and the triangles that closed them.
+    pub holes: usize,
+    pub hole_triangles: usize,
+    /// The whole mesh faced inwards and was turned right way out.
+    pub inside_out: bool,
+}
+
+impl MeshRepair {
+    pub fn is_empty(&self) -> bool {
+        *self == MeshRepair::default()
+    }
+
+    /// One plain sentence: what was repaired.
+    pub fn describe(&self) -> String {
+        let mut parts = Vec::new();
+        if self.duplicates > 0 {
+            parts.push(format!("{} duplicate triangle(s) removed", self.duplicates));
+        }
+        if self.flipped > 0 {
+            parts.push(format!("{} backwards triangle(s) turned round", self.flipped));
+        }
+        if self.holes > 0 {
+            parts.push(format!("{} hole(s) closed with {} triangle(s)", self.holes, self.hole_triangles));
+        }
+        if self.inside_out {
+            parts.push("the mesh was inside out and was turned right way out".to_string());
+        }
+        if parts.is_empty() { "nothing needed repairing".to_string() } else { parts.join("; ") }
+    }
+}
+
+/// The repairs a mesh body would get before conversion, without converting it: for the message
+/// that tells the person what was fixed.
+pub fn mesh_repair_report(body: &Body, tolerance: f64) -> Result<MeshRepair> {
+    let input = body.mesh.as_ref().ok_or_else(|| invalid("select a mesh body"))?;
+    let welded = weld(input, tolerance.clamp(1e-6, 1.))?;
+    let welded = welded.mesh.as_ref().ok_or_else(|| invalid("empty mesh"))?;
+    Ok(repair(welded)?.1)
+}
+
+/// Repairs a welded mesh the way a printed or downloaded STL usually needs: drops duplicate
+/// triangles, turns backwards triangles to agree with their neighbours, closes holes (each
+/// boundary loop filled from its middle), and turns an inside-out mesh right way out. Edges shared
+/// by more than two triangles are left for the closed-solid check to refuse. A mesh that encloses
+/// no volume after repair (an open sheet) is refused.
+fn repair(mesh: &crate::meshbody::TriMesh) -> Result<(Body, MeshRepair)> {
+    use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+    let mut report = MeshRepair::default();
+    let mut positions = mesh.positions.clone();
+    // Duplicates: the same three corners, in any order.
+    let mut seen = HashSet::new();
+    let mut tris: Vec<[u32; 3]> = Vec::with_capacity(mesh.triangles.len());
+    for t in &mesh.triangles {
+        let mut k = *t;
+        k.sort_unstable();
+        if seen.insert(k) {
+            tris.push(*t);
+        } else {
+            report.duplicates += 1;
+        }
+    }
+    // Neighbours across each edge shared by exactly two triangles.
+    let mut by_edge: HashMap<(u32, u32), Vec<usize>> = HashMap::new();
+    for (i, t) in tris.iter().enumerate() {
+        for (a, b) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
+            by_edge.entry((a.min(b), a.max(b))).or_default().push(i);
+        }
+    }
+    let has_directed = |t: &[u32; 3], a: u32, b: u32| (t[0] == a && t[1] == b) || (t[1] == a && t[2] == b) || (t[2] == a && t[0] == b);
+    // Orientation: spread each piece's first triangle's way round to all of it.
+    let mut done = vec![false; tris.len()];
+    for start in 0..tris.len() {
+        if done[start] {
+            continue;
+        }
+        done[start] = true;
+        let mut piece = vec![start];
+        let mut flips = 0usize;
+        let mut queue = VecDeque::from([start]);
+        while let Some(i) = queue.pop_front() {
+            let t = tris[i];
+            for (a, b) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
+                let Some(list) = by_edge.get(&(a.min(b), a.max(b))) else { continue };
+                if list.len() != 2 {
+                    continue;
+                }
+                let j = if list[0] == i { list[1] } else { list[0] };
+                if done[j] {
+                    continue;
+                }
+                // Agreeing neighbours run a shared edge the opposite ways.
+                if has_directed(&tris[j], a, b) {
+                    tris[j].swap(1, 2);
+                    flips += 1;
+                }
+                done[j] = true;
+                piece.push(j);
+                queue.push_back(j);
+            }
+        }
+        // The first triangle may have been the backwards one: then turn the whole piece, so
+        // the count is of the few that were wrong, not the many that were right.
+        if flips * 2 > piece.len() {
+            for &i in &piece {
+                tris[i].swap(1, 2);
+            }
+            flips = piece.len() - flips;
+        }
+        report.flipped += flips;
+    }
+    // Holes: the edges with one triangle, run backwards, chain into the loops that close them.
+    let mut next: HashMap<u32, Vec<u32>> = HashMap::new();
+    let mut open = 0usize;
+    for (key, list) in &by_edge {
+        if list.len() != 1 {
+            continue;
+        }
+        let t = tris[list[0]];
+        let (a, b) = if has_directed(&t, key.0, key.1) { (key.0, key.1) } else { (key.1, key.0) };
+        next.entry(b).or_default().push(a);
+        open += 1;
+    }
+    let mut used: BTreeSet<(u32, u32)> = BTreeSet::new();
+    let starts: Vec<u32> = {
+        let mut v: Vec<u32> = next.keys().copied().collect();
+        v.sort_unstable();
+        v
+    };
+    for s in starts {
+        let mut walk = vec![s];
+        let mut at = s;
+        let mut ok = false;
+        for _ in 0..=open {
+            let Some(outs) = next.get(&at) else { break };
+            // A vertex where the boundary branches is left alone.
+            if outs.len() != 1 {
+                break;
+            }
+            let to = outs[0];
+            if used.contains(&(at, to)) {
+                break;
+            }
+            if to == s {
+                ok = true;
+                break;
+            }
+            walk.push(to);
+            at = to;
+        }
+        if !ok || walk.len() < 3 {
+            continue;
+        }
+        for k in 0..walk.len() {
+            used.insert((walk[k], walk[(k + 1) % walk.len()]));
+        }
+        if walk.len() == 3 {
+            tris.push([walk[0], walk[1], walk[2]]);
+            report.hole_triangles += 1;
+        } else {
+            let centre = walk.iter().fold(Vec3::ZERO, |acc, &v| acc + positions[v as usize]) * (1.0 / walk.len() as f64);
+            let c = u32::try_from(positions.len()).map_err(|_| invalid("too many vertices"))?;
+            positions.push(centre);
+            for k in 0..walk.len() {
+                tris.push([walk[k], walk[(k + 1) % walk.len()], c]);
+            }
+            report.hole_triangles += walk.len();
+        }
+        report.holes += 1;
+    }
+    // Right way out: the enclosed volume is positive when the triangles face outwards.
+    let volume: f64 =
+        tris.iter().map(|t| positions[t[0] as usize].dot(positions[t[1] as usize].cross(positions[t[2] as usize]))).sum::<f64>() / 6.0;
+    let bounds = positions.iter().fold(solidcraft_geom::Aabb3::EMPTY, |mut b, p| {
+        b.add(*p);
+        b
+    });
+    let size = bounds.size();
+    if volume.abs() <= (size.x * size.y * size.z).abs() * 1e-9 || !volume.is_finite() {
+        return Err(invalid("the mesh is an open surface that encloses no volume, so it cannot be a solid"));
+    }
+    if volume < 0.0 {
+        for t in &mut tris {
+            t.swap(1, 2);
+        }
+        report.inside_out = true;
+    }
+    // Only the vertices the triangles use (a hole's middle point included).
+    Ok((crate::mesh_body(&positions, &tris)?, report))
 }
 
 fn extrusion(mesh: &crate::meshbody::TriMesh, axis: Vec3, tolerance: f64) -> Result<Option<Body>> {
@@ -712,6 +918,53 @@ mod tests {
         }
     }
 
+    /// A box mesh with the usual STL faults (a copied triangle, a backwards one, a missing face,
+    /// the lot inside out) is repaired and converts to the same box.
+    #[test]
+    fn repairs_a_broken_stl_before_converting() {
+        let source = crate::box_solid(Vec3::ZERO, Vec3::new(10., 20., 30.)).unwrap();
+        let good = mesh_of(&source);
+        let m = good.mesh.as_ref().unwrap();
+        // Inside out: every triangle turned.
+        let mut tris: Vec<[u32; 3]> = m.triangles.iter().map(|t| [t[0], t[2], t[1]]).collect();
+        // The top face's triangles go (a hole); of the rest, one is backwards (right way round in
+        // an inside-out mesh) and one is copied.
+        let on_top = |t: &[u32; 3]| t.iter().all(|&v| (m.positions[v as usize].z - 30.).abs() < 1e-9);
+        let before = tris.len();
+        tris.retain(|t| !on_top(t));
+        assert!(before - tris.len() >= 2);
+        tris[3].swap(1, 2);
+        tris.push(tris[5]);
+        // (Loading a mesh body already turns a backwards triangle to agree with its neighbours,
+        // so the repair finds none of those left; its own pass covers meshes built otherwise.)
+        let broken = crate::mesh_body(&m.positions, &tris).unwrap();
+        let report = mesh_repair_report(&broken, 0.01).unwrap();
+        assert_eq!((report.duplicates, report.holes, report.inside_out), (1, 1, true), "{report:?}");
+        let result = convert_prismatic_mesh(&broken, 0.01).unwrap();
+        assert!(!result.is_mesh());
+        assert!((crate::measure(&result).unwrap().volume - 6000.).abs() < 1e-6);
+        assert_eq!(result.faces(0.01).unwrap().len(), 6);
+    }
+
+    /// Timing only (`cargo test -- --ignored timing_`): how long a big curved mesh takes.
+    #[test]
+    #[ignore]
+    fn timing_big_curved_mesh() {
+        for chord in [0.02, 0.008, 0.004] {
+            let sphere = crate::sphere(Vec3::ZERO, 40.).unwrap();
+            let mesh = mesh_of_chord(&sphere, chord);
+            let n = mesh.mesh.as_ref().unwrap().triangles.len();
+            let t = std::time::Instant::now();
+            let r = convert_prismatic_mesh(&mesh, 0.05);
+            eprintln!("TIMING {n} triangles: {:?} in {:.1} s", r.as_ref().map(|b| b.faces(0.01).map(|f| f.len()).unwrap_or(0)).map_err(|e| e.to_string()), t.elapsed().as_secs_f64());
+        }
+    }
+
+    fn mesh_of_chord(body: &Body, chord: f64) -> Body {
+        let mesh = body.mesh(&crate::MeshTolerance::chord(chord)).unwrap();
+        crate::mesh_body(&mesh.positions, &mesh.triangles).unwrap()
+    }
+
     /// #358, #12281: a mesh that is no constant-section prism — the section of a rounded form
     /// changes every way you slice it — still converts, as the faceted solid its triangles
     /// describe: one planar face per triangle (or per coplanar run), nothing rounded into
@@ -840,10 +1093,10 @@ mod tests {
         let triangles: Vec<[u32; 3]> = (0..n as u32).map(|i| [i, i + 1, i + 2]).collect();
         let body = crate::mesh_body(&positions, &triangles).unwrap();
         let err = convert_prismatic_mesh(&body, 0.05).unwrap_err().to_string();
-        assert!(err.contains("50001 triangles") && err.contains("50000"), "{err}");
+        assert!(err.contains(&format!("{n} triangles")) && err.contains(&MAX_TRIANGLES.to_string()) && err.contains("3D operations"), "{err}");
         let mesh = crate::meshbody::TriMesh { positions: vec![Vec3::ZERO; MAX_TRIANGLES * 3 + 1], triangles: vec![], corner_normals: Vec::new() };
         let err = weld(&mesh, 0.05).unwrap_err().to_string();
-        assert!(err.contains("150001 vertices") && err.contains("150000"), "{err}");
+        assert!(err.contains(&format!("{} vertices", MAX_TRIANGLES * 3 + 1)) && err.contains(&(MAX_TRIANGLES * 3).to_string()), "{err}");
     }
 
     #[test]

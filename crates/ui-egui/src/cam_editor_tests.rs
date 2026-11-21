@@ -492,3 +492,26 @@ fn a_setups_origin_is_placed_on_the_stock_a_design_point_or_picked_on_the_model(
     let current = h.app.cam_editor.as_ref().unwrap().origin.current;
     assert!(current.is_none_or(|c| (c - far).len() > 1e-3), "{current:?}");
 }
+
+/// v19: in Manufacture, a click on the model opens a menu of the operations that fit what was
+/// clicked; picking one makes it on that click.
+#[test]
+fn a_click_on_the_model_lists_the_operations_that_fit_it() {
+    let mut h = Harness::new();
+    pocket(&mut h);
+    h.app.ui.tab = crate::manufacture_workspace::TAB.into();
+    h.settle();
+    h.step(&json!({"move": {"world": [20.0, 15.0, 10.0]}})).unwrap();
+    h.frames(4);
+    h.step(&json!({"click": {"world": [20.0, 15.0, 10.0]}})).unwrap();
+    h.frames(4);
+    assert!(h.widget("Machine this with:").is_some(), "the menu opens at the click; status {:?}", h.app.status);
+    // Picking from it: the operation starts on that click (a floor click on the top here makes
+    // a pocket bounded by what the click finds).
+    let before = h.app.session.doc.manufacture.setups[0].operations.len();
+    let sel = solidcraft_engine::Sel::Face { body: "Block".into(), index: 0, point: solidcore_record::Vec3::new(20.0, 15.0, 10.0) };
+    crate::cam_editor::begin_with_click(&mut h.app, "cam.operation.face", sel);
+    h.frames(6);
+    let ops = &h.app.session.doc.manufacture.setups[0].operations;
+    assert_eq!(ops.len(), before + 1, "made on the click; status {:?}", h.app.status);
+}

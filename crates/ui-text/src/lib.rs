@@ -437,6 +437,8 @@ pub mod names {
         ("cam.post", "Make G-code", "Post Process"),
         ("solid.emboss", "Wrap", "Emboss"),
         ("sketch.intersect", "Cut Outline", "Intersect"),
+        ("mesh.convert", "Mesh to Solid", "Convert Mesh"),
+        ("file.insert_mesh", "Import STL", "Insert Mesh"),
     ];
 
     /// Words that mean other things elsewhere ("Top" is a view too): renamed only inside the

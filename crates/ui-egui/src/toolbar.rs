@@ -2169,7 +2169,13 @@ pub(crate) enum HoverShape {
 
 /// The operations that fit what the pointer is on in the model (none when it is on nothing).
 fn hover_ops(app: &SolveApp) -> &'static [&'static str] {
-    match hover_shape(app) {
+    ops_for(hover_shape(app))
+}
+
+/// The operations that fit a shape on the model (none for nothing): the ribbon marks them while
+/// the pointer is on it, and a click on it lists them to pick from.
+pub(crate) fn ops_for(shape: Option<HoverShape>) -> &'static [&'static str] {
+    match shape {
         Some(HoverShape::Top) => &["cam.operation.face"],
         Some(HoverShape::Floor) => &["cam.operation.pocket2d", "cam.operation.adaptive2d"],
         Some(HoverShape::Wall) => &["cam.operation.pocket2d", "cam.operation.contour2d", "cam.operation.chamfer2d", "cam.operation.swarf"],

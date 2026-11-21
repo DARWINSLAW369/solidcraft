@@ -849,6 +849,12 @@ fn body_items(app: &SolveApp, bodies: &[String], browser: bool) -> Vec<Item> {
             v.push(act("ui.findBrowser", "Find in Browser", "list").with(json!({ "body": b })));
         }
         v.push(act("ui.findTimeline", "Find in Timeline", "rollback").with(json!({ "body": b })));
+        // An imported mesh (STL) can be made a solid right here: repaired, then converted.
+        if crate::open_meshing::session_world(&app.session).body(&b).is_some_and(|m| m.body.is_mesh()) {
+            v.push(Item::sep());
+            let label = solidcraft_ui_text::names::command("mesh.convert").unwrap_or("Convert Mesh");
+            v.push(cmd(app, "mesh.convert", label).with(json!({ "body": b })));
+        }
         // A part the modelling kernel refuses can be repaired.
         if crate::open_meshing::session_world(&app.session).body(&b).is_some_and(|m| m.body.smlib_refused().is_some()) {
             v.push(Item::sep());

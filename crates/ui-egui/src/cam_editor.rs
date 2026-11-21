@@ -917,6 +917,14 @@ pub fn open_post(app: &mut SolveApp, setup: Option<u64>) {
 
 /// Post form OK: asks where to save, with the post's own extension (Mach3: .tap), then posts.
 fn post_to_file(app: &mut SolveApp, params: Value) {
+    // Group by tool sorts the Browser itself first, so the list, the simulation and the program
+    // all run in one order.
+    if params["group_by_tool"] == true
+        && let Some(s) = params["setup"].as_u64()
+        && let Err(e) = app.run("cam.setup.group_by_tool", json!({"setup": s}))
+    {
+        app.set_status(e, true);
+    }
     let post_id = params["post"].as_str().unwrap_or("generic").to_string();
     let ext = cam::post::Post::builtin(&post_id).map(|p| p.extension).unwrap_or_else(|| "nc".into());
     let name: String = params["program"].as_str().unwrap_or("program").chars().filter(|c| !matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|')).collect();
@@ -1002,6 +1010,15 @@ pub fn apply(app: &mut SolveApp, ed: &mut CamEditor) -> bool {
                     Ok(_) => {}
                 }
             }
+            // A changed operation, tool or setup also changes what the operations after it start
+            // from: every toolpath that is out of date is remade in the background (the current
+            // ones are kept), so nothing waits yellow for Make Toolpaths.
+            if matches!(ed.target, Target::Operation(_) | Target::Tool(_) | Target::Setup(_))
+                && app.cam_job.is_none()
+                && !app.session.doc.manufacture.setups.iter().all(|st| st.operations.is_empty())
+            {
+                crate::cam_job::start(app, json!({}));
+            }
             // A plain command says what it did (Tool Kit: the tools it added).
             if let (Target::Run(_) | Target::Command(_), Some(info)) = (ed.target, v["notice"]["info"].as_str()) {
                 warnings.insert(0, info.to_string());
@@ -1031,7 +1048,103 @@ pub fn apply(app: &mut SolveApp, ed: &mut CamEditor) -> bool {
 const GOOD: &str = "✓ ";
 
 /// Draws the editor when it is open. Called once per frame.
+/// Starts operation `id` already picked on `sel` (the face or edge clicked before the operation
+/// was chosen): its click panel opens and takes that click as its first, so a floor, a wall or an
+/// edge makes the operation at once, and holes or faces wait for more clicks and Done.
+pub fn begin_with_click(app: &mut SolveApp, id: &str, sel: solidcraft_engine::Sel) {
+    let _ = app.session.execute("select.clear", &json!({}));
+    if !crate::manufacture_workspace::start(app, id) {
+        return;
+    }
+    let Some(ed) = app.cam_editor.as_mut() else { return };
+    let ty = ed.draft["type"].as_str().unwrap_or("").to_string();
+    let Some(pick) = ed.pick.as_mut() else { return };
+    // What this click can be for the operation (a pocket clicked by its rim edge: a wall).
+    if let Some(what) = pick_choices(&ty).0.iter().copied().find(|w| pick_of(&sel, *w).is_some()) {
+        pick.what = what;
+        pick.before = Some(Vec::new());
+        // Selected again: the click panel takes it as the click, next frame.
+        app.session.selection.push(sel);
+    }
+}
+
+/// The menu a click on the model opens in Manufacture (when nothing else is going on): the
+/// operations that fit what was clicked (a floor: Pocket; an outside wall: Profile; a hole:
+/// Drill …), every one of them whether its ribbon button is in a drop-down or not. Picking one
+/// starts it on that click.
+fn op_menu(app: &mut SolveApp, ctx: &egui::Context) {
+    thread_local! {
+        static OPEN: std::cell::RefCell<Option<(egui::Pos2, crate::toolbar::HoverShape)>> = const { std::cell::RefCell::new(None) };
+        /// Where the menu was drawn last frame: a click there is on the menu, not the model.
+        static RECT: std::cell::Cell<Option<egui::Rect>> = const { std::cell::Cell::new(None) };
+    }
+    let idle = app.ui.tab == "MANUFACTURE"
+        && app.cam_editor.is_none()
+        && app.tool.is_none()
+        && app.dialog.is_none()
+        && app.session.cam.preview.is_none()
+        && app.cam_job.is_none();
+    if !idle {
+        OPEN.with(|o| *o.borrow_mut() = None);
+        RECT.with(|r| r.set(None));
+        return;
+    }
+    // A click (not a drag) on a face or an edge in the view opens it there.
+    let clicked = ctx.input(|i| i.pointer.primary_clicked() && !i.modifiers.any());
+    let over_menu = ctx.input(|i| i.pointer.interact_pos()).is_some_and(|p| RECT.with(|r| r.get().is_some_and(|r| r.contains(p))));
+    let on_model = app.viewport.mouse.is_some() && !over_menu;
+    if clicked && on_model {
+        let shape = crate::toolbar::hover_shape(app);
+        let at = ctx.input(|i| i.pointer.interact_pos());
+        OPEN.with(|o| *o.borrow_mut() = shape.zip(at).map(|(s, p)| (p + egui::vec2(12.0, 8.0), s)));
+        return;
+    }
+    let Some((at, shape)) = OPEN.with(|o| *o.borrow()) else { return };
+    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+        OPEN.with(|o| *o.borrow_mut() = None);
+        return;
+    }
+    let ids: Vec<&'static str> = crate::toolbar::ops_for(Some(shape)).iter().copied().filter(|id| solidcraft_engine::find_command(id).is_some()).collect();
+    if ids.is_empty() {
+        OPEN.with(|o| *o.borrow_mut() = None);
+        return;
+    }
+    let t = Tokens::get();
+    let mut chosen = None;
+    let mut close = false;
+    let shown = egui::Area::new(egui::Id::new("sc_cam_op_menu")).order(egui::Order::Foreground).fixed_pos(at).show(ctx, |ui| {
+        egui::Frame::popup(ui.style()).show(ui, |ui| {
+            ui.set_min_width(180.0);
+            ui.label(RichText::new(solidcraft_ui_text::tr_label("Machine this with:")).color(t.text_dim));
+            for id in &ids {
+                let own = solidcraft_engine::find_command(id).map(|c| c.label).unwrap_or(id);
+                let label = solidcraft_ui_text::names::command(id).map_or_else(|| solidcraft_ui_text::tr_label(own).to_string(), str::to_string);
+                if ui.add(egui::Button::new(label).min_size(egui::vec2(170.0, 0.0))).clicked() {
+                    chosen = Some(*id);
+                }
+            }
+            if ui.add(egui::Button::new(RichText::new("Close").color(t.text_dim)).frame(false)).clicked() {
+                close = true;
+            }
+        });
+    });
+    RECT.with(|r| r.set(Some(shown.response.rect)));
+    if close {
+        OPEN.with(|o| *o.borrow_mut() = None);
+    }
+    if let Some(id) = chosen {
+        OPEN.with(|o| *o.borrow_mut() = None);
+        match app.session.selection.last().cloned() {
+            Some(sel) => begin_with_click(app, id, sel),
+            None => {
+                let _ = crate::manufacture_workspace::start(app, id);
+            }
+        }
+    }
+}
+
 pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
+    op_menu(app, ctx);
     let Some(mut ed) = app.cam_editor.take() else { return };
     // Deleted (or undone away): nothing left to edit.
     let now = match ed.target {

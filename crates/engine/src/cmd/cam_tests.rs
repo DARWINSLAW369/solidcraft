@@ -1636,3 +1636,37 @@ fn workholding_finds_a_vise_grip_on_a_block_and_a_waist_for_tabs() {
     // No hole: no pin.
     assert_eq!(by("pin")["feasible"], false);
 }
+
+/// Group by Tool reorders the setup's operations themselves (the Browser), keeping a drill after
+/// the pocket it goes through, and the post then needs no reorder of its own.
+#[test]
+fn group_by_tool_sorts_the_setup_and_keeps_dependent_order() {
+    let mut s = block();
+    let flat = add_flat(&mut s, 3.0);
+    let drill = run(&mut s, "cam.tool.add", json!({"name": "6 mm drill", "kind": "drill", "diameter": 6, "flute_length": 30, "overall_length": 60}))["id"]
+        .as_u64()
+        .unwrap();
+    let setup = run(
+        &mut s,
+        "cam.setup.create",
+        json!({"name": "Top", "machine": TEST_MILL.clone(), "stock": {"mode": "relative_box", "x_neg": 1, "x_pos": 1, "y_neg": 1, "y_pos": 1, "z_pos": 1}}),
+    )["id"]
+        .as_u64()
+        .unwrap();
+    let add = |s: &mut Session, p: Value| run(s, "cam.operation.add", p)["id"].as_u64().unwrap();
+    let pocket = add(&mut s, json!({"setup": setup, "type": "pocket2d", "tool": flat, "name": "Pocket", "stepover": 1, "stepdown": 1, "geometry": {"source": "faces", "points": [[28, 15, 6]]}}));
+    let hole = add(&mut s, json!({"setup": setup, "type": "drill", "tool": drill, "name": "Drill", "cycle": "peck", "peck": 1, "geometry": {"source": "holes", "points": [[13, 10, 5]]}}));
+    let outside = add(&mut s, json!({"setup": setup, "type": "contour2d", "tool": flat, "name": "Outside", "side": "outside", "stepdown": 2, "geometry": {"source": "silhouette"}}));
+    let r = run(&mut s, "cam.setup.group_by_tool", json!({"setup": setup}));
+    assert_eq!(r["moved"], true, "{r}");
+    assert_eq!(r["order"], json!([pocket, outside, hole]), "{r}");
+    assert_eq!((r["tool_changes_before"].as_u64(), r["tool_changes_after"].as_u64()), (Some(2), Some(1)), "{r}");
+    let order: Vec<u64> = s.doc.manufacture.setup(setup).unwrap().operations.iter().map(|o| o.id).collect();
+    assert_eq!(order, vec![pocket, outside, hole]);
+    // Remade in the new order: nothing left stale or missing.
+    for id in [pocket, outside, hole] {
+        assert!(s.cam.operations.contains_key(&id), "{id} has a toolpath");
+    }
+    // Again: nothing moves.
+    assert_eq!(run(&mut s, "cam.setup.group_by_tool", json!({"setup": setup}))["moved"], false);
+}

@@ -78,6 +78,30 @@ pub fn start(app: &mut SolveApp, id: &str) -> bool {
             crate::shop_library::open(app);
             return true;
         }
+        // Group by Tool: one click, the picked setup (or the first) reordered in the Browser.
+        "cam.setup.group_by_tool" => {
+            let Some(s) = setup.or_else(|| app.session.doc.manufacture.setups.first().map(|st| st.id)) else {
+                app.set_status("Create a setup first: there is nothing to group.".to_string(), false);
+                return true;
+            };
+            match app.run("cam.setup.group_by_tool", json!({"setup": s})) {
+                Ok(v) => {
+                    let text = if v["moved"] == true {
+                        format!(
+                            "Grouped by tool: {} (tool changes {} → {})",
+                            v["names"].as_array().map(|a| a.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(", ")).unwrap_or_default(),
+                            v["tool_changes_before"],
+                            v["tool_changes_after"]
+                        )
+                    } else {
+                        "Already grouped by tool: nothing to move.".to_string()
+                    };
+                    app.set_status(text, false);
+                }
+                Err(e) => app.set_status(e, true),
+            }
+            return true;
+        }
         "cam.tool.kit" => {
             let mut params = json!({"kit": "makera_essential", "material": "aluminium"});
             if let Some(s) = setup {
