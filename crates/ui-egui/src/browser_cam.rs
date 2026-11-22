@@ -397,10 +397,16 @@ pub fn setup_items(_app: &SolveApp, id: u64) -> Vec<Item> {
 
 /// The menu of a tool.
 pub fn tool_items(app: &SolveApp, id: u64) -> Vec<Item> {
-    let used = app.session.doc.manufacture.tool_uses(id) > 0;
+    let uses = app.session.doc.manufacture.tool_uses(id);
+    // A tool in use can be deleted too: the menu says its operations will need another one.
+    let delete = if uses > 0 {
+        format!("Delete (used by {uses} op{}: edit {} to pick another tool)", if uses == 1 { "" } else { "s" }, if uses == 1 { "it" } else { "them" })
+    } else {
+        "Delete".to_string()
+    };
     vec![
         Item::action("ui.camEditTool", "Edit", "edit").with(json!({"tool": id})),
-        Item::action("cam.tool.remove", "Delete", "delete").with(json!({"tool": id})).on(!used),
+        Item::action("cam.tool.remove", &delete, "delete").with(json!({"tool": id})),
     ]
 }
 

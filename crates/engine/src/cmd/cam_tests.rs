@@ -76,9 +76,12 @@ fn tools_setups_and_operations_are_stored_in_the_design() {
     // Unknown type: a suggestion.
     let e = fails(&mut s, "cam.operation.add", json!({"setup": setup_id, "type": "paralel", "tool": tool}));
     assert!(e.contains("parallel"), "{e}");
-    // A used tool cannot be removed.
-    let e = fails(&mut s, "cam.tool.remove", json!({"tool": tool}));
-    assert!(e.contains("used"), "{e}");
+    // A used tool can be removed: its operations wait for another tool (and say so).
+    let r = run(&mut s, "cam.tool.remove", json!({"tool": tool}));
+    assert_eq!(r["operations_without_tool"], 1, "{r}");
+    assert!(s.doc.manufacture.tools.tools.is_empty());
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(s.doc.manufacture.tools.tools.len(), 1);
     // Round trip through the design's JSON.
     let text = serde_json::to_string(&*s.doc).unwrap();
     let doc: solidcraft_doc::Document = serde_json::from_str(&text).unwrap();

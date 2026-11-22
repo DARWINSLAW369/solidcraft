@@ -1465,13 +1465,20 @@ impl SolveApp {
         }
         let params = if matches!(id, "render.start" | "render.preflight") { render_workspace::light::filter_request(self, params)? } else { params };
         let selected_before = self.session.selection.clone();
+        // A change to an operation, tool or setup while toolpaths are being made: the running job
+        // is given up (it would finish with stale toolpaths) and started again after the change.
+        let restart_cam = cam_job::is_cam_edit(id) && cam_job::cancel(self);
         let r = self.session.execute(id, &params).map_err(|e| e.to_string()).and_then(|reply| {
             panel_runtime::apply_placement_command(self, id, &reply).map_err(solidcraft_engine::panels::commands::error_text)?;
             render_workspace::apply_command(self, id, &reply)?;
             Ok(reply)
         });
         self.big_operation |= now_ms() - t0 >= recovery_ui::BIG_OPERATION_MS;
-        self.after_command(id, &params, revision, selected_before, r)
+        let out = self.after_command(id, &params, revision, selected_before, r);
+        if restart_cam && !self.session.doc.manufacture.setups.iter().all(|st| st.operations.is_empty()) {
+            cam_job::start(self, serde_json::json!({}));
+        }
+        out
     }
 
     /// Commit already prepared rendering through the same window post-hooks,

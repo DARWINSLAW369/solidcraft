@@ -37,6 +37,38 @@ impl HeightMap {
         Ok(HeightMap { origin: bounds.min, cell, nx, ny, z: vec![fill; total] })
     }
 
+    /// Sets every height to `f(point)`, the rows shared out over the CPU's threads (one thread
+    /// on the web, or for a small map). `f` must not depend on the order it is called in.
+    pub fn fill_parallel(&mut self, f: impl Fn(Vec2) -> f64 + Sync) {
+        let (origin, cell, nx, ny) = (self.origin, self.cell, self.nx, self.ny);
+        if nx == 0 || ny == 0 {
+            return;
+        }
+        let at = |k: usize| Vec2::new(origin.x + (k % nx) as f64 * cell, origin.y + (k / nx) as f64 * cell);
+        #[cfg(not(target_arch = "wasm32"))]
+        let threads = std::thread::available_parallelism().map_or(1, std::num::NonZero::get).min(ny);
+        #[cfg(target_arch = "wasm32")]
+        let threads = 1usize;
+        if threads <= 1 || nx * ny < 20_000 {
+            for (k, v) in self.z.iter_mut().enumerate() {
+                *v = f(at(k));
+            }
+            return;
+        }
+        let rows_per = ny.div_ceil(threads);
+        let (f, at) = (&f, &at);
+        std::thread::scope(|s| {
+            for (c, chunk) in self.z.chunks_mut(rows_per * nx).enumerate() {
+                s.spawn(move || {
+                    let k0 = c * rows_per * nx;
+                    for (k, v) in chunk.iter_mut().enumerate() {
+                        *v = f(at(k0 + k));
+                    }
+                });
+            }
+        });
+    }
+
     pub fn from_fn(bounds: Aabb2, cell: f64, mut f: impl FnMut(Vec2) -> f64) -> Result<HeightMap> {
         let mut h = HeightMap::new(bounds, cell, 0.0)?;
         for j in 0..h.ny {

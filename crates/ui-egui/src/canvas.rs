@@ -840,6 +840,8 @@ fn draw(app: &SolveApp, ui: &mut egui::Ui, painter: &egui::Painter, proj: &Proj,
         Some(n) if ui.ctx().is_being_dragged(arrow_id) => crate::extrude_face_snap::stops(app, d, base, n * sign),
         _ => Vec::new(),
     };
+    // The points picked, before the value is borrowed: the box keeps off them.
+    let picked = picked_points_rect(app, d, proj);
     let Some((label, kind, value)) = d.primary() else { return };
     let len = all_span.or_else(|| {
         if to_span.is_some() && value.trim().is_empty() {
@@ -898,7 +900,12 @@ fn draw(app: &SolveApp, ui: &mut egui::Ui, painter: &egui::Painter, proj: &Proj,
     // Also without an arrow (the value does not evaluate yet): the box still keeps off the handles.
     // Clear of the command window first, then off the placement handles: the handles have the
     // last word, as a box over a grip takes the press meant for it (#6608).
-    let place = box_place(app, proj);
+    let mut place = box_place(app, proj);
+    // Clear of the points picked too (a sketch fillet's corners): a box over them hides the
+    // very points being clicked.
+    if place.handles.is_none() {
+        place.handles = picked;
+    }
     let size = box_size(ui, egui::Id::unique("sc_canvas_area"), label, note.as_deref());
     let box_at = clear_of_dialog(rect_at(box_at, egui::Align2::LEFT_TOP, size), place).min;
     let box_at = crate::place_gizmo::yield_box(ui, anchor, box_at);
@@ -1064,6 +1071,27 @@ const DIALOG_GAP: f32 = 4.0;
 /// clear of both wins. A box that misses them keeps its place, and one that no side clears
 /// keeps it too, unless a side leaves the handles free: a box over a handle takes the press
 /// the user meant for the handle.
+/// The screen area of the points the command has picked (sketch points and vertices), a little
+/// grown: where a value box must not sit. None when no point is picked.
+fn picked_points_rect(app: &SolveApp, d: &Dialog, proj: &Proj) -> Option<egui::Rect> {
+    let st = crate::open_meshing::session_world(&app.session);
+    let sketch = app.session.active_sketch.and_then(|id| st.sketch(id));
+    let mut rect: Option<egui::Rect> = None;
+    for sel in d.inputs.iter().flat_map(|i| i.items.iter()) {
+        let world = match sel {
+            Sel::Vertex { point, .. } => Some(*point),
+            Sel::SketchPoint { .. } => crate::sketch_modify_ui::point_id(&app.session, sel)
+                .and_then(|id| sketch.and_then(|ss| ss.sketch.point_index(id).and_then(|i| ss.sketch.points.get(i)).map(|p| ss.plane.to_world(p.pos)))),
+            _ => None,
+        };
+        if let Some(s) = world.and_then(|w| proj.to_screen(w)) {
+            let r = egui::Rect::from_center_size(s, egui::vec2(28.0, 28.0));
+            rect = Some(rect.map_or(r, |x| x.union(r)));
+        }
+    }
+    rect
+}
+
 fn clear_of_dialog(rect: egui::Rect, place: BoxPlace) -> egui::Rect {
     let mut obstacles: Vec<egui::Rect> = Vec::new();
     if let Some(dialog) = place.dialog {

@@ -1992,3 +1992,77 @@ fn a_projected_pcurve_past_the_quarter_line_a_face_form_ends_on_stays_in_the_fac
     solidcore_ops::record_check::validate(b).unwrap();
     solidcore_ops::record_check::agreement(b).unwrap();
 }
+
+/// A prism standing on the polygon `pts` (counter-clockwise seen from +z) from z = 0 to `h`:
+/// its faces, outward, every edge a line.
+fn prism_faces(w: &mut W, pts: &[[f64; 2]], h: f64) -> Vec<u64> {
+    let n = pts.len();
+    let at = |i: usize| -> V { if i < n { [pts[i][0], pts[i][1], 0.0] } else { [pts[i - n][0], pts[i - n][1], h] } };
+    let vs: Vec<(u64, V)> = (0..2 * n).map(|i| (w.vertex(at(i)), at(i))).collect();
+    let mut edges: std::collections::HashMap<(usize, usize), u64> = Default::default();
+    let mut edge = |w: &mut W, p: usize, q: usize| -> u64 {
+        let key = (p.min(q), p.max(q));
+        let e = match edges.get(&key) {
+            Some(e) => *e,
+            None => {
+                let e = w.line_edge(vs[key.0], vs[key.1], true, 1.0);
+                edges.insert(key, e);
+                e
+            }
+        };
+        w.oe(e, p == key.0)
+    };
+    let mut faces = Vec::new();
+    // The bottom (facing down: its ring the other way round) and the top.
+    let ring: Vec<usize> = (0..n).rev().collect();
+    let oes: Vec<u64> = (0..n).map(|k| edge(w, ring[k], ring[(k + 1) % n])).collect();
+    let bound = w.bound(&oes, true, true);
+    let plane = w.plane([0.0, 0.0, 0.0], [0.0, 0.0, -1.0], [1.0, 0.0, 0.0]);
+    faces.push(w.face(&[bound], plane, true));
+    let oes: Vec<u64> = (0..n).map(|k| edge(w, n + k, n + (k + 1) % n)).collect();
+    let bound = w.bound(&oes, true, true);
+    let plane = w.plane([0.0, 0.0, h], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]);
+    faces.push(w.face(&[bound], plane, true));
+    // The sides: bottom edge, up, top edge back, down.
+    for i in 0..n {
+        let j = (i + 1) % n;
+        let oes = [edge(w, i, j), edge(w, j, n + j), edge(w, n + j, n + i), edge(w, n + i, i)];
+        let bound = w.bound(&oes, true, true);
+        let (d, o) = (sub3(at(j), at(i)), at(i));
+        let len = len3(d);
+        let plane = w.plane(o, [d[1] / len, -d[0] / len, 0.0], [d[0] / len, d[1] / len, 0.0]);
+        faces.push(w.face(&[bound], plane, true));
+    }
+    faces
+}
+
+/// A 10 x 20 x 30 block with one vertical corner cut off by a strip `width` wide, in a file whose
+/// uncertainty is 0.01 mm.
+fn block_with_strip(width: f64) -> p21::Exchange {
+    let mut w = W::default();
+    let pts = [[0.0, 0.0], [10.0, 0.0], [10.0, 20.0 - width], [10.0 - width, 20.0], [0.0, 20.0]];
+    let faces = prism_faces(&mut w, &pts, 30.0);
+    let shell = closed_shell(&mut w, &faces);
+    let solid = w.add(format!("MANIFOLD_SOLID_BREP('block',#{shell})"));
+    w.file_with_uncertainty(&[solid], 0.01)
+}
+
+/// tangency-labs/solidcraft#19545: a strip narrower than the file's tolerance (Fusion 360 writes
+/// them, 0.002 mm wide) is closed up: one closed solid, one face fewer, and the note says so; the
+/// kept edge's raised tolerance is in the raised edges' note.
+#[test]
+fn a_sliver_strip_under_the_tolerance_is_closed_up() {
+    let s = one_solid(&block_with_strip(0.002));
+    assert!(!s.sheet);
+    assert_eq!(s.brep.faces.len(), 6, "the strip's face is gone");
+    assert!(s.notes.iter().any(|n| n.contains("1 sliver faces narrower than the file's tolerance closed up")), "{:?}", s.notes);
+    assert!(s.notes.iter().any(|n| n.contains("edges lie off their faces' surfaces")), "the raised tolerance is recorded: {:?}", s.notes);
+}
+
+/// A strip wider than the tolerance is a face like any other: left as it is.
+#[test]
+fn a_strip_wider_than_the_tolerance_is_left_alone() {
+    let s = one_solid(&block_with_strip(0.5));
+    assert_eq!(s.brep.faces.len(), 7);
+    assert!(!s.notes.iter().any(|n| n.contains("sliver")), "{:?}", s.notes);
+}

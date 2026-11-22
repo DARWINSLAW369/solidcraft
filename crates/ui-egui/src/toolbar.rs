@@ -2188,7 +2188,15 @@ pub(crate) fn ops_for(shape: Option<HoverShape>) -> &'static [&'static str] {
         Some(HoverShape::OutsideWall) => &["cam.operation.contour2d", "cam.operation.chamfer2d", "cam.operation.swarf"],
         Some(HoverShape::Edge) => &["cam.operation.chamfer2d", "cam.operation.pocket2d", "cam.operation.flow", "cam.operation.morph"],
         Some(HoverShape::OutsideEdge) => &["cam.operation.chamfer2d", "cam.operation.contour2d", "cam.operation.flow", "cam.operation.morph"],
-        Some(HoverShape::Hole) => &["cam.operation.drill", "cam.operation.bore", "cam.operation.circular", "cam.operation.thread"],
+        // A big round hole is pocketed as often as it's bored.
+        Some(HoverShape::Hole) => &[
+            "cam.operation.drill",
+            "cam.operation.bore",
+            "cam.operation.circular",
+            "cam.operation.thread",
+            "cam.operation.pocket2d",
+            "cam.operation.adaptive2d",
+        ],
         Some(HoverShape::Boss) => &["cam.operation.contour2d", "cam.operation.chamfer2d"],
         Some(HoverShape::Curved) => &[
             "cam.operation.pocket3d",

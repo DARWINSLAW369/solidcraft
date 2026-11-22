@@ -1201,8 +1201,9 @@ impl<'b, 'a> Builder<'b, 'a> {
     fn collapse_slivers(&mut self, mut shells: Vec<Vec<(u32, bool)>>) -> (Vec<Vec<(u32, bool)>>, usize) {
         let tol = self.tol;
         let mut collapsed = 0;
-        // A face at a time: each collapse changes the edges the next one sees.
-        for _ in 0..64 {
+        // A face at a time: each collapse changes the edges the next one sees. Each pass takes a
+        // face away, so the faces bound the passes (no fixed limit that would leave some behind).
+        for _ in 0..=self.faces.len() {
             let mut uses: HashMap<u32, usize> = HashMap::new();
             for face in &self.faces {
                 for l in &face.loops {
@@ -1215,24 +1216,46 @@ impl<'b, 'a> Builder<'b, 'a> {
             }
             let point = |b: &Self, v: u32| b.vertices.get(v as usize).map(|x| x.point);
             let dist = |a: [f64; 3], b: [f64; 3]| ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt();
+            // An edge is short when its whole curve is within the tolerance: both ends, and its
+            // middle too (a curved edge whose ends meet can go a long way round, and the reader
+            // takes such an edge for its arc, not for a point).
             let short = |b: &Self, e: u32| -> Option<f64> {
                 let edge = b.edges.get(e as usize)?;
                 let [v0, v1] = edge.vertices;
                 if v0 == v1 {
                     return None;
                 }
-                let d = dist(point(b, v0)?, point(b, v1)?);
-                (d <= tol).then_some(d)
+                let (p0, p1) = (point(b, v0)?, point(b, v1)?);
+                let d = dist(p0, p1);
+                if d > tol {
+                    return None;
+                }
+                let [t0, t1] = edge.interval;
+                let mid = CurveEval::new(&edge.curve).ok()?.point(0.5 * (t0 + t1))?;
+                let m = [mid.x, mid.y, mid.z];
+                let reach = dist(m, p0).max(dist(m, p1));
+                (reach <= tol).then_some(d.max(reach))
             };
-            // The first sliver: its face, its two short edges and its long edges (kept, dropped).
+            // Where vertex `v` goes when each short edge's second vertex becomes its first.
+            let merged = |b: &Self, shorts: [u32; 2], v: u32| -> u32 {
+                let mut v = v;
+                for s in shorts {
+                    if let Some([a, z]) = b.edges.get(s as usize).map(|e| e.vertices)
+                        && v == z
+                    {
+                        v = a;
+                    }
+                }
+                v
+            };
+            // The first sliver: its face, its two short edges and its long edges (kept, dropped),
+            // and whether the long edges run the same way once merged. Everything is checked
+            // before anything changes, so a strip left alone leaves the record as it was.
             let mut found = None;
             'faces: for (fi, face) in self.faces.iter().enumerate() {
                 let [LoopB::Edges(es)] = face.loops.as_slice() else { continue };
-                if es.len() != 4 {
-                    continue;
-                }
-                for k in 0..2 {
-                    let (s1, l1, s2, l2) = (es[k].0, es[k + 1].0, es[k + 2].0, es[(k + 3) % 4].0);
+                let [a, b, c, d] = es.as_slice() else { continue };
+                for (s1, l1, s2, l2) in [(a.0, b.0, c.0, d.0), (b.0, c.0, d.0, a.0)] {
                     if l1 == l2 || s1 == s2 || short(self, l1).is_some() || short(self, l2).is_some() {
                         continue;
                     }
@@ -1241,12 +1264,25 @@ impl<'b, 'a> Builder<'b, 'a> {
                     if uses.get(&l1).copied() != Some(2) || uses.get(&l2).copied() != Some(2) {
                         continue;
                     }
-                    found = Some((fi, [s1, s2], l1, l2, w1.max(w2)));
+                    let (Some(kv), Some(dv)) = (self.edges.get(l1 as usize).map(|e| e.vertices), self.edges.get(l2 as usize).map(|e| e.vertices))
+                    else {
+                        continue;
+                    };
+                    let kv = kv.map(|v| merged(self, [s1, s2], v));
+                    let dv = dv.map(|v| merged(self, [s1, s2], v));
+                    let same_way = kv == dv;
+                    if !same_way && kv != [dv[1], dv[0]] {
+                        // The long edges wouldn't end at the same vertices: leave this strip.
+                        continue;
+                    }
+                    found = Some((fi, [s1, s2], l1, l2, w1.max(w2), same_way));
                     break 'faces;
                 }
             }
-            let Some((fi, short_edges, keep, drop, width)) = found else { break };
-            // Each short edge's second vertex becomes its first, everywhere.
+            let Some((fi, short_edges, keep, drop, width, same_way)) = found else { break };
+            // Each short edge's second vertex becomes its first, everywhere. The tolerances grow
+            // to cover the strip's width at its ends, and the growth is recorded: the kept edge
+            // goes into the raised edges' note (raise_edges later covers any wider gap along it).
             for s in short_edges {
                 let Some([a, b]) = self.edges.get(s as usize).map(|e| e.vertices) else { continue };
                 for e in &mut self.edges {
@@ -1260,16 +1296,9 @@ impl<'b, 'a> Builder<'b, 'a> {
                     x.tolerance = x.tolerance.max(2.0 * width);
                 }
             }
-            let (Some(kv), Some(dv)) = (self.edges.get(keep as usize).map(|e| e.vertices), self.edges.get(drop as usize).map(|e| e.vertices)) else {
-                break;
-            };
-            let same_way = kv == dv;
-            if !same_way && kv != [dv[1], dv[0]] {
-                // The long edges don't end at the same vertices after all: leave it.
-                break;
-            }
             if let Some(e) = self.edges.get_mut(keep as usize) {
                 e.tolerance = e.tolerance.max(2.0 * width);
+                self.raised_edges.insert(keep);
             }
             // The sliver goes; the face beside the dropped edge uses the kept one, and no loop
             // keeps a short edge (each is a single vertex now).

@@ -547,12 +547,15 @@ fn tool_set(s: &mut Session, p: &Value) -> Result<Value> {
 fn tool_remove(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "cam.tool.remove";
     let id = id_param(p, "tool", cmd)?;
+    // A tool its operations still use can go too (the user's call, 2026-11-22): they keep their
+    // settings and wait for another tool, which editing them puts in.
     let uses = s.doc.manufacture.tool_uses(id);
-    if uses > 0 {
-        return Err(bad(cmd, format!("tool {id} is used by {uses} operation(s); change or remove them first")));
-    }
     s.doc_mut().manufacture.tools.remove(id).ok_or_else(|| bad(cmd, format!("no tool {id}")))?;
-    Ok(json!({"removed": id}))
+    let mut out = json!({"removed": id, "operations_without_tool": uses});
+    if uses > 0 {
+        out["notice"] = json!({"info": format!("{uses} operation(s) used it: edit each one and pick another tool")});
+    }
+    Ok(out)
 }
 
 fn tool_list(s: &mut Session, _p: &Value) -> Result<Value> {
@@ -2351,9 +2354,21 @@ fn resolve_geometry(
                     *l = cam::polyline::clean(l, tol * 0.1);
                 }
                 floor_loops.retain(|l| l.len() >= 3);
-                // A chamfer goes along the one edge loop clicked near (the outside, a hole's rim,
-                // a pocket's rim), not every loop of the face.
-                if matches!(op.kind, OpKind::Chamfer2d { .. }) {
+                // A profile clicked on the face it stands on (not a wall) cuts that face's
+                // outside: its largest loop, never a hole in it.
+                let clicked_floor = level(&body.body, face).is_some();
+                if matches!(op.kind, OpKind::Contour2d { .. }) && clicked_floor {
+                    let area = |l: &Vec<Vec2>| {
+                        (0..l.len()).map(|i| { let (a, b) = (l[i], l[(i + 1) % l.len()]); a.x * b.y - b.x * a.y }).sum::<f64>().abs() * 0.5
+                    };
+                    if let Some(outer) = floor_loops.iter().max_by(|x, y| area(x).total_cmp(&area(y))).cloned() {
+                        floor_loops = vec![outer];
+                    }
+                }
+                // A chamfer, or a profile clicked on a wall or its edge, goes along the one edge
+                // loop clicked near (the outside, a hole's rim, a pocket's rim), not every loop of
+                // the face: a profile of the outside wall must not cut the holes too.
+                if matches!(op.kind, OpKind::Chamfer2d { .. }) || (matches!(op.kind, OpKind::Contour2d { .. }) && !clicked_floor) {
                     let at = to_xy(*pt);
                     let away = |l: &Vec<Vec2>| {
                         (0..l.len())
@@ -2440,26 +2455,76 @@ fn resolve_geometry(
                 if let Ok(Some((mesh, face, dist, body_name))) = super::face::face_at_state(&state, *pt, None)
                     && dist < 1.0
                     && let Some(body) = state.body(&body_name)
-                    && let Some(solidcraft_kernel::FaceSurface::Cylinder { origin, axis, radius }) =
-                        solidcraft_kernel::face_surface(&body.body, face as usize)
                 {
-                    let pts: Vec<Vec3> = mesh
-                        .triangles
-                        .iter()
-                        .zip(&mesh.tri_face)
-                        .filter(|(_, f)| **f == face)
-                        .flat_map(|(t, _)| t.iter().filter_map(|i| mesh.positions.get(*i as usize).copied()))
-                        .collect();
-                    let ax = axis.vec();
-                    let tmax = pts.iter().map(|p| (*p - origin).dot(ax)).fold(f64::NEG_INFINITY, f64::max);
-                    let tmin = pts.iter().map(|p| (*p - origin).dot(ax)).fold(f64::INFINITY, f64::min);
-                    let a_op = dir_to_op(ax);
-                    top = to_op(if a_op.z >= 0.0 { origin + ax * tmax } else { origin + ax * tmin });
-                    if d <= 0.0 {
-                        d = 2.0 * radius;
+                    // The hole's wall: the face clicked, or (a click on the hole's rim or the flat
+                    // face beside it) the round hole whose wall passes within a millimetre of the
+                    // click. A click there was drilled where it landed, on the rim, into solid.
+                    let mut faces: Vec<_> = vec![face];
+                    for f in &mesh.tri_face {
+                        if !faces.contains(f) {
+                            faces.push(*f);
+                        }
+                    }
+                    let mut best: Option<(f64, Vec3, Vec3, f64, f64, f64)> = None;
+                    for f in faces {
+                        let Some(solidcraft_kernel::FaceSurface::Cylinder { origin, axis, radius }) =
+                            solidcraft_kernel::face_surface(&body.body, f as usize)
+                        else {
+                            continue;
+                        };
+                        let tris: Vec<[Vec3; 3]> = mesh
+                            .triangles
+                            .iter()
+                            .zip(&mesh.tri_face)
+                            .filter(|(_, tf)| **tf == f)
+                            .filter_map(|(t, _)| {
+                                Some([
+                                    mesh.positions.get(t[0] as usize).copied()?,
+                                    mesh.positions.get(t[1] as usize).copied()?,
+                                    mesh.positions.get(t[2] as usize).copied()?,
+                                ])
+                            })
+                            .collect();
+                        let Some(first) = tris.first() else { continue };
+                        let ax = axis.vec();
+                        let ts = tris.iter().flatten().map(|p| (*p - origin).dot(ax));
+                        let tmax = ts.clone().fold(f64::NEG_INFINITY, f64::max);
+                        let tmin = ts.fold(f64::INFINITY, f64::min);
+                        let v = *pt - origin;
+                        let t = v.dot(ax);
+                        let radial = v - ax * t;
+                        let off_wall = (radial.dot(radial).sqrt() - radius).abs();
+                        let score = if f == face {
+                            -1.0
+                        } else {
+                            if off_wall > 1.0 || t < tmin - 1.0 || t > tmax + 1.0 {
+                                continue;
+                            }
+                            // A hole, not a boss: its wall faces the axis.
+                            let c = (first[0] + first[1] + first[2]) * (1.0 / 3.0);
+                            let n = (first[1] - first[0]).cross(first[2] - first[0]);
+                            let out = c - origin - ax * (c - origin).dot(ax);
+                            if n.dot(out) >= 0.0 {
+                                continue;
+                            }
+                            off_wall
+                        };
+                        if best.as_ref().is_none_or(|b| score < b.0) {
+                            best = Some((score, origin, ax, radius, tmin, tmax));
+                        }
+                    }
+                    if let Some((_, origin, ax, radius, tmin, tmax)) = best {
+                        let a_op = dir_to_op(ax);
+                        top = to_op(if a_op.z >= 0.0 { origin + ax * tmax } else { origin + ax * tmin });
+                        if d <= 0.0 {
+                            d = 2.0 * radius;
+                        }
                     }
                 }
-                g.holes.push(top);
+                // The same hole picked twice (its wall and its rim) is drilled once.
+                if !g.holes.iter().any(|h| (*h - top).dot(*h - top) < 1e-6) {
+                    g.holes.push(top);
+                }
                 g.hole_diameter = d;
             }
         }
@@ -2543,6 +2608,13 @@ fn prepare_one(
         && op.heights.bottom == cam::linking::Heights::default().bottom
     {
         // The floor of a picked face is where the cut ends; the selection's top is the stock top.
+        heights.bottom = fz;
+        notice.value("bottom_from_face_mm", r3(fz));
+    }
+    if matches!(op.kind, OpKind::Face { .. }) && op.heights.bottom == cam::linking::Heights::default().bottom {
+        // Facing only skims the top: it ends at the picked face, or at the model's top, never
+        // down through the part.
+        let fz = geometry.face_z.unwrap_or(model_z.1).min(heights.top);
         heights.bottom = fz;
         notice.value("bottom_from_face_mm", r3(fz));
     }
@@ -2706,6 +2778,9 @@ pub struct GenerateJob {
     setups: Vec<SetupJob>,
     pub operations: Vec<u64>,
     revision: u64,
+    /// Set from outside to stop before the next toolpath (the window's job was given up because
+    /// the user changed an operation, tool or setup).
+    pub cancel: Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// What a running generation reports.
@@ -2855,7 +2930,7 @@ pub fn prepare_generate(s: &Session, p: &Value) -> Result<GenerateJob> {
         ends.insert(st.id, (prev_sig, prev_generation));
         jobs.push(SetupJob { id: st.id, name: st.name.clone(), steps, stock_map, notice, inherit: inherit.filter(|_| in_job), feeds_next: false });
     }
-    Ok(GenerateJob { setups: jobs, operations, revision: s.geometry_revision })
+    Ok(GenerateJob { setups: jobs, operations, revision: s.geometry_revision, cancel: Arc::default() })
 }
 
 impl GenerateJob {
@@ -2922,6 +2997,10 @@ impl GenerateJob {
                         }));
                     }
                     Step::Generate { id, name, kind, tool_id, oriented, prepared } => {
+                        if self.cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                            // Given up: nobody takes the results, so stop here.
+                            return;
+                        }
                         report(GenerateEvent::Started(id));
                         let tool = prepared.tool.clone();
                         let g = Arc::new(compute(*prepared, job.stock_map.as_ref()));

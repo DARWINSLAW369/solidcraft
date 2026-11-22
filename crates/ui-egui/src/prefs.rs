@@ -1355,6 +1355,9 @@ preference_settings! {
     /// The machine a first CAM setup starts on (a machine id from `cam.machine.list`). Empty:
     /// the generic machine with no limits, as before.
     default_machine: String = String::new(), 0;
+    /// The library an operation's Tool from opens on (a shop library's name); empty: the job's
+    /// own tools. Set by the last pick there.
+    cam_tool_from: String = String::new(), 0;
     /// Shared workspace composition; system windows and popups retain their purpose.
     layout: crate::ui_kit::LayoutMode = Default::default(), PAGE_LAYOUT;
     /// Preview panel placement and reflow while dragging. Off shows the drop outline.
