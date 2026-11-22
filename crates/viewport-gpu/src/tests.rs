@@ -98,3 +98,39 @@ fn tessellation_without_surfaces_does_not_dispatch() {
     let Some(gpu) = gpu() else { return };
     check_empty_tessellation(&gpu, &TessPlan::default());
 }
+
+/// tangency-labs/solidcraft#19545: what `pack` refuses, `plan_drawable` refuses too, so the caller
+/// draws that body from its CPU mesh instead of handing it to a chunk (where its refusal would leave
+/// every other body of the chunk undrawn). No GPU needed.
+#[test]
+fn plan_drawable_refuses_what_pack_refuses() {
+    let plane = || EvalSurface::Plane {
+        origin: solidcore_tess::vec3(Vec3::ZERO),
+        du: solidcore_tess::vec3(Vec3::X),
+        dv: solidcore_tess::vec3(Vec3::Y),
+    };
+    let face = |surface: Option<u32>| solidcore_tess::FacePlan {
+        surface,
+        uv: vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]],
+        triangles: vec![[0, 1, 2]],
+        ..Default::default()
+    };
+    let good = TessPlan { surfaces: vec![plane()], faces: vec![face(Some(0))], ..Default::default() };
+    assert!(plan_drawable(&good), "a plain face on a surface of the plan");
+    assert!(pack(&[&good]).is_ok(), "and pack takes it");
+    // A pole node: pack refuses it, and so does plan_drawable.
+    let mut pole = good.clone();
+    if let Some(f) = pole.faces.first_mut() {
+        f.poles = vec![solidcore_tess::PoleNode { node: 0, rule: solidcore_tess::PoleRule::Averaged }];
+    }
+    assert!(!plan_drawable(&pole), "a face with a pole node");
+    assert!(pack(&[&pole]).is_err());
+    // No surface, and a surface index past the plan's surfaces.
+    let none = TessPlan { surfaces: vec![plane()], faces: vec![face(None)], ..Default::default() };
+    assert!(!plan_drawable(&none), "a face with no surface");
+    let past = TessPlan { surfaces: vec![plane()], faces: vec![face(Some(1))], ..Default::default() };
+    assert!(!plan_drawable(&past), "a surface index past the plan's surfaces");
+    // In a plan of several faces, one bad face is enough.
+    let mixed = TessPlan { surfaces: vec![plane()], faces: vec![face(Some(0)), face(None)], ..Default::default() };
+    assert!(!plan_drawable(&mixed));
+}
