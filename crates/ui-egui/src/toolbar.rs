@@ -1477,7 +1477,13 @@ fn ribbon_contents(app: &mut SolveApp, ui: &mut egui::Ui, shape: RibbonShape) ->
         };
         // On the Manufacture tab, the operations that fit what the pointer is on in the model
         // (a floor, a wall, an edge, a hole, a curved face) are outlined.
-        let fits: &[&str] = if tab == "MANUFACTURE" { hover_ops(app) } else { &[] };
+        // On the Model tab, the tools that fit the edge or face under the pointer, the same way.
+        let fits_owned: Vec<&'static str> = match tab.as_str() {
+            "MANUFACTURE" => hover_ops(app).to_vec(),
+            "MODEL" => crate::model_menu::hover_ids(app),
+            _ => Vec::new(),
+        };
+        let fits: &[&str] = &fits_owned;
         let fit_accent = crate::workspace::tab_accent(&t, &tab);
         // The app's part of each button: its hover text, drags, the search's preview, deferred
         // persistent paint and a family's variants menu.
