@@ -173,8 +173,13 @@ pub struct CamEditor {
     /// Where the operation's Tool box takes its tools from: 0 the job's own, else a shop
     /// library (1 the first one listed).
     tool_from: usize,
+    /// `tool_from` as last seen: `None` until it is set from the remembered library; a change
+    /// from it is the user's pick, which is remembered (Preferences `cam_tool_from`).
+    tool_from_seen: Option<usize>,
     /// The shop library as `cam.library.list` gave it when the form opened.
     shop: Option<Value>,
+    /// When the libraries were last asked for (ms), to ask again once a second while none came.
+    shop_tried: f64,
     /// A shop library tool picked in the Tool box (its library index), copied into the job after
     /// the form is drawn.
     shop_pick: Option<usize>,
@@ -337,7 +342,9 @@ impl CamEditor {
             quick_before: None,
             stock_cache: None,
             tool_from: 0,
+            tool_from_seen: None,
             shop: None,
+            shop_tried: 0.0,
             shop_pick: None,
             pick: None,
         }
@@ -436,6 +443,16 @@ pub fn open_new(app: &mut SolveApp, setup: u64, kind: &str, call: &Value) -> boo
     };
     if let Value::Object(m) = &mut full {
         m.remove("id");
+        // A new operation is named in the words chosen in Preferences > Names (Profile, Pocket,
+        // Adaptive ...), not by its internal type (contour2d, pocket2d ...).
+        if m.get("name").and_then(Value::as_str).is_none_or(|n| n.is_empty() || n == kind) {
+            let id = format!("cam.operation.{kind}");
+            let label = solidcraft_ui_text::names::command(&id)
+                .map(str::to_string)
+                .or_else(|| solidcraft_engine::find_command(&id).map(|c| solidcraft_ui_text::tr_label(c.label).to_string()))
+                .unwrap_or_else(|| kind.to_string());
+            m.insert("name".into(), json!(label));
+        }
     }
     let mut ed = CamEditor::new(Target::NewOperation(setup), full);
     // Click on the model first, the form behind Adjust; something already selected fills the
@@ -816,12 +833,45 @@ fn finish_pick(app: &mut SolveApp, ed: &mut CamEditor, geometry: Option<Value>) 
             }
         }
     }
+    // No tool picked yet (a new job, or the tool was deleted): nothing is made; the form opens
+    // on its Tool box with the click kept, so OK makes it once a tool is picked.
+    let tool = ed.draft["tool"].as_u64().unwrap_or(0);
+    if !app.session.doc.manufacture.tools.tools.iter().any(|t| t.id == tool) {
+        ed.pick = None;
+        ed.message = Some(("Pick a tool first: Tool from (a library) and Tool, then OK.".to_string(), true));
+        app.set_status("Pick a tool for it, then OK.", true);
+        return false;
+    }
     if !apply(app, ed) {
         return false;
     }
     let Target::Operation(id) = ed.target else { return false };
     let name = ed.draft["name"].as_str().unwrap_or("Operation").to_string();
     let _ = app.session.execute("select.clear", &json!({}));
+    // The tool doesn't suit what was picked (too big for the pocket, not a chamfer mill): the
+    // operation's form stays open on its Tool box with why, so a tool that fits is picked
+    // (from a library too) before anything is decided.
+    let wrong_tool = app.session.cam.operations.get(&id).and_then(|g| {
+        g.notice
+            .issues
+            .iter()
+            .find(|i| i.severity == cam::notice::Severity::Error && matches!(i.code.as_str(), "tool_too_large" | "tool_kind"))
+            .map(|i| i.message.clone())
+    });
+    // A tool refused before any toolpath (a chamfer without a chamfer mill comes back as an
+    // error, not a notice): the same.
+    let wrong_tool = wrong_tool.or_else(|| {
+        ed.message
+            .as_ref()
+            .map(|m| m.0.clone())
+            .filter(|m| m.contains("chamfer mill") || m.contains("won't fit") || m.contains("does not fit") || m.contains("needs a drill"))
+    });
+    if let Some(why) = wrong_tool {
+        ed.pick = None;
+        ed.message = Some((format!("{why}. Pick a tool in the Tool box (Tool from: a library to take one from it), then OK."), true));
+        app.set_status(format!("{name}: pick a tool that suits it."), true);
+        return false;
+    }
     // `apply` made its toolpath.
     if app.session.cam.operations.contains_key(&id) {
         app.set_status(format!("{name} added and its toolpath made. Double-click it in the Browser to adjust it."), false);
@@ -1000,8 +1050,12 @@ pub fn apply(app: &mut SolveApp, ed: &mut CamEditor) -> bool {
             }
             let mut warnings: Vec<String> =
                 v["notice"]["issues"].as_array().into_iter().flatten().filter_map(|i| i["message"].as_str().map(str::to_string)).collect();
-            // An operation added or changed gets its toolpath at once (nothing waits on Generate).
-            if let Target::Operation(id) = ed.target {
+            // A 2D, drilling or other quick operation (no model surface to follow) gets its own
+            // toolpath at once, in a split second, so a tool too big or of the wrong kind is known
+            // before the form closes (it stays open to pick another). The slow 3D ones don't wait.
+            if let Target::Operation(id) = ed.target
+                && app.session.doc.manufacture.operation(id).is_some_and(|(_, o)| !o.kind.needs_model())
+            {
                 match app.run("cam.generate", json!({"operation": id})) {
                     Err(e) => warnings.push(format!("Its toolpath could not be made: {e}")),
                     Ok(_) if !app.session.cam.operations.contains_key(&id) => {
@@ -1010,9 +1064,10 @@ pub fn apply(app: &mut SolveApp, ed: &mut CamEditor) -> bool {
                     Ok(_) => {}
                 }
             }
-            // A changed operation, tool or setup also changes what the operations after it start
-            // from: every toolpath that is out of date is remade in the background (the current
-            // ones are kept), so nothing waits yellow for Make Toolpaths.
+            // An operation added or changed, and the ones after it (a changed tool or setup too),
+            // get their toolpaths in the background (the current ones are kept), so the window
+            // never freezes on a slow toolpath and nothing waits yellow for Make Toolpaths. A job
+            // that was already running was given up by the change and started again.
             if matches!(ed.target, Target::Operation(_) | Target::Tool(_) | Target::Setup(_))
                 && app.cam_job.is_none()
                 && !app.session.doc.manufacture.setups.iter().all(|st| st.operations.is_empty())
@@ -1082,8 +1137,7 @@ fn op_menu(app: &mut SolveApp, ctx: &egui::Context) {
         && app.cam_editor.is_none()
         && app.tool.is_none()
         && app.dialog.is_none()
-        && app.session.cam.preview.is_none()
-        && app.cam_job.is_none();
+        && app.session.cam.preview.is_none();
     if !idle {
         OPEN.with(|o| *o.borrow_mut() = None);
         RECT.with(|r| r.set(None));
@@ -1199,10 +1253,41 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let tools: Vec<(u64, String)> = job.iter().map(|tl| (tl.id, format!("T{}  ·  {}  ·  {}", tl.number, tl.name, tl.kind.label()))).collect();
     // The shop libraries, for the Tool box: read once when an operation's form opens.
     let is_op = matches!(ed.target, Target::Operation(_) | Target::NewOperation(_));
-    if is_op && ed.shop.is_none() {
-        ed.shop = Some(app.run("cam.library.list", json!({})).unwrap_or(Value::Null));
+    // The shop libraries for Tool from: asked of the engine directly (the app's own door refuses
+    // while a file is being saved or opened, and a refusal kept would hide Tool from for the
+    // whole form); a refusal is not kept, so the next frame asks again.
+    let no_tools = ed.shop.as_ref().is_none_or(|v| v["tools"].as_array().is_none_or(Vec::is_empty));
+    if is_op && no_tools && crate::now_ms() - ed.shop_tried > 1000.0 {
+        ed.shop_tried = crate::now_ms();
+        // Why none came is shown under Tool from (an error, or the file read that holds none).
+        let note = match app.session.execute("cam.library.list", &json!({})) {
+            Ok(v) => {
+                let n = v["tools"].as_array().map_or(0, Vec::len);
+                let note = if n == 0 { format!("no tools in {}", v["path"].as_str().unwrap_or("the library file")) } else { String::new() };
+                ed.shop = Some(v);
+                note
+            }
+            Err(e) => e.to_string(),
+        };
+        LIBRARY_NOTE.with(|x| *x.borrow_mut() = note);
     }
     let libraries: Vec<(String, Vec<(usize, String)>)> = if is_op { shop_libraries(ed.shop.as_ref()) } else { Vec::new() };
+    // Tool from sticks: a form opens on the library last picked there, and a new pick is kept.
+    if is_op && !libraries.is_empty() {
+        match ed.tool_from_seen {
+            None => {
+                let want = &app.preferences.cam_tool_from;
+                ed.tool_from = libraries.iter().position(|(name, _)| !want.is_empty() && name == want).map_or(0, |k| k + 1);
+                ed.tool_from_seen = Some(ed.tool_from);
+            }
+            Some(seen) if seen != ed.tool_from => {
+                app.preferences.cam_tool_from =
+                    if ed.tool_from == 0 { String::new() } else { libraries.get(ed.tool_from - 1).map(|l| l.0.clone()).unwrap_or_default() };
+                ed.tool_from_seen = Some(ed.tool_from);
+            }
+            Some(_) => {}
+        }
+    }
     let machines: Vec<(String, cam::machine::Machine)> = match ed.target {
         Target::Setup(_) | Target::NewSetup => solidcraft_engine::cmd::cam::known_machines(&app.session).into_iter().map(|e| (e.id, e.machine)).collect(),
         _ => Vec::new(),
@@ -1534,6 +1619,14 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             }
         }
     }
+    // OK while picking holes or faces counts as Done: what was picked is used (it said
+    // "Nothing picked yet" with 8 holes picked).
+    if ok
+        && let Some(g) = ed.pick.as_ref().and_then(|p| pick_geometry(p.what, &p.points, p.sketch))
+        && finish_pick(app, &mut ed, Some(g))
+    {
+        return;
+    }
     if ok || apply_now {
         // The two-click setup's second click: once the zero is placed, it is done.
         let zero_placed = ed.quick == Some(Quick::Zero) && ed.place.is_some();
@@ -1611,7 +1704,18 @@ fn fields(
 
 /// The operation's Tool from and Tool rows: the job's own tools, or a shop library (a pick
 /// copies the tool into the job, the library stays as it is).
+thread_local! {
+    /// Why the shop libraries didn't load (empty when they did), shown under the Tool box.
+    static LIBRARY_NOTE: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+}
+
 fn tool_rows(ui: &mut egui::Ui, op: &mut Map<String, Value>, tools: &[(u64, String)], from: &mut ToolFrom) {
+    if from.libraries.is_empty() {
+        let note = LIBRARY_NOTE.with(|x| x.borrow().clone());
+        if !note.is_empty() {
+            ui.label(RichText::new(format!("Tool libraries didn't load: {note}")).color(Tokens::get().warning));
+        }
+    }
     if !from.libraries.is_empty() {
         let names: Vec<String> = std::iter::once("Job tools".to_string())
             .chain(from.libraries.iter().map(|(name, list)| format!("{name} ({})", list.len())))
@@ -1630,6 +1734,10 @@ fn tool_rows(ui: &mut egui::Ui, op: &mut Map<String, Value>, tools: &[(u64, Stri
                 *from.pick = Some(*index);
             }
             let t = Tokens::get();
+            // The library stays picked, so say which job tool the operation uses now.
+            if let Some((_, label)) = tools.iter().find(|x| x.0 == tool) {
+                ui.label(RichText::new(format!("Using: {label}")).color(t.text));
+            }
             ui.label(RichText::new("Picking a tool copies it into this job. Edit it there: the library stays as it is.").color(t.text_dim));
             ui.label(RichText::new(crate::shop_library::PLACEHOLDER_NOTE).color(t.text_dim));
         }
@@ -1858,7 +1966,10 @@ fn take_shop_tool(app: &mut SolveApp, ed: &mut CamEditor, index: usize) {
     if let Value::Object(op) = &mut ed.draft {
         op.insert("tool".into(), json!(id));
     }
+    // The Tool box shows the tool now in use (the job's list); the library picked stays the
+    // one the next form opens on (Preferences cam_tool_from is not changed by this).
     ed.tool_from = 0;
+    ed.tool_from_seen = Some(0);
     ed.message = Some((message, false));
 }
 

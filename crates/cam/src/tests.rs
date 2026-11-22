@@ -284,6 +284,43 @@ fn pocket_2d_stays_inside_and_reaches_the_bottom() {
 }
 
 #[test]
+fn pocket_with_a_stepover_over_the_radius_leaves_no_islands() {
+    // A 12 mm tool at a 9 mm stepover in a 42 x 26 pocket: the tool centre's area is 30 x 14,
+    // its middle 7 mm in, short of the second ring (9 mm in). The rings alone left a band
+    // 6..8 mm in uncut (the user's Flat Finish islands, 2026-11-22).
+    let tool = flat(12.0);
+    let ctx = ctx_2d(&tool, vec![rect(Vec2::new(0.0, 0.0), Vec2::new(42.0, 26.0))], heights(0.0, -1.0));
+    let o = op(OpKind::Pocket2d { stepover: 9.0, stepdown: 1.0, direction: Default::default(), inside_out: true, finishing_stepover: 0.0 });
+    let (tp, _) = generate(&o, &ctx).unwrap();
+    let cuts: Vec<(Vec2, Vec2)> = tp
+        .moves
+        .windows(2)
+        .filter(|w| w[1].kind == MoveKind::Cut)
+        .map(|w| (Vec2::new(w[0].to.x, w[0].to.y), Vec2::new(w[1].to.x, w[1].to.y)))
+        .collect();
+    // Every point of the pocket floor is under the tool somewhere (within its radius of a cut).
+    let mut missed = Vec::new();
+    for j in 0..=26 {
+        for i in 0..=42 {
+            let q = Vec2::new(f64::from(i), f64::from(j));
+            let near = cuts.iter().any(|(a, b)| polyline::point_segment(q, *a, *b).0 <= 6.0 + 1e-6);
+            if !near {
+                missed.push(q);
+            }
+        }
+    }
+    // The pocket's corners are rounded by the tool: only points within the corner fillets
+    // (farther than the radius from both walls' tool paths) may be missed.
+    missed.retain(|q| {
+        let cx = if q.x < 21.0 { 6.0 } else { 36.0 };
+        let cy = if q.y < 13.0 { 6.0 } else { 20.0 };
+        let in_corner = (q.x < 6.0 || q.x > 36.0) && (q.y < 6.0 || q.y > 20.0);
+        !(in_corner && q.dist(Vec2::new(cx, cy)) > 6.0 - 1e-6)
+    });
+    assert!(missed.is_empty(), "uncut: {missed:?}");
+}
+
+#[test]
 fn pocket_too_small_for_tool_reports_an_issue() {
     let tool = flat(12.0);
     let ctx = ctx_2d(&tool, vec![rect(Vec2::new(0.0, 0.0), Vec2::new(10.0, 10.0))], heights(0.0, -2.0));

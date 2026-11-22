@@ -170,7 +170,43 @@ pub fn pocket_level(
     if cl_region.is_empty() {
         return Ok(0);
     }
-    let family = offset::inward_family(cl_region, stepover, tol, 100_000)?;
+    let mut family = offset::inward_family(cl_region, stepover, tol, 100_000)?;
+    // A stepover wider than the tool's radius: where an area's middle is narrower than the next
+    // ring, its last ring stops up to a stepover short of the middle and leaves islands (a 12 mm
+    // tool at 9 mm left 3 mm bands). One more ring there, a stepover less a radius in, reaches
+    // the rest; it is kept only where no deeper ring comes within a radius of it.
+    let r = lk.tool.radius();
+    if stepover > r + tol && r > 0.0 {
+        let reach = stepover - r;
+        let mut extra: Vec<(usize, Poly)> = Vec::new();
+        for (k, level) in family.iter().enumerate() {
+            let inner = offset::offset_set(level, -reach, tol).unwrap_or_default();
+            let next = family.get(k + 1).map(|n| polyline::SegmentGrid::new(n));
+            for ring in inner {
+                let needed = match &next {
+                    None => true,
+                    Some(grid) => {
+                        let n = ring.len();
+                        (0..n).any(|i| {
+                            let (a, b) = (ring[i], ring[(i + 1) % n]);
+                            [a, (a + b) * 0.5].iter().any(|p| grid.distance(*p) > r * 1.2 + tol)
+                        })
+                    }
+                };
+                if needed && ring.len() >= 3 {
+                    extra.push((k + 1, ring));
+                }
+            }
+        }
+        for (depth, ring) in extra {
+            if family.len() <= depth {
+                family.resize(depth + 1, Vec::new());
+            }
+            if let Some(level) = family.get_mut(depth) {
+                level.push(ring);
+            }
+        }
+    }
     // Collect rings with their depth index; order innermost first within each connected area.
     // Rings are grouped by the outermost ring that contains them.
     let outers: Vec<&Poly> = family[0].iter().filter(|p| polyline::is_ccw(p)).collect();
@@ -236,11 +272,7 @@ fn pocket(
     let cl = offset::offset_set(&region, -r, ctx.tolerance)?;
     let mut notice = Notice::default();
     if cl.is_empty() {
-        notice.issue(
-            Issue::error("tool_too_large", format!("a {:.2} mm tool does not fit the pocket", tool.diameter))
-                .parameter("tool", tool.id)
-                .suggest(serde_json::json!({"tool_diameter_max": r3(polyline::largest_inscribed(&region, 64).map_or(0.0, |x| x.1 * 2.0))})),
-        );
+        notice.issue(too_large(tool.diameter, &region).parameter("tool", tool.id));
         return Ok((Toolpath::new(), notice));
     }
     let bottom = ctx.heights.bottom + ctx.stock_to_leave_axial;
@@ -295,7 +327,7 @@ fn adaptive(
     let cl = offset::offset_set(&region, -r, ctx.tolerance)?;
     let mut notice = Notice::default();
     if cl.is_empty() {
-        notice.issue(Issue::error("tool_too_large", format!("a {:.2} mm tool does not fit the pocket", tool.diameter)).parameter("tool", tool.id));
+        notice.issue(too_large(tool.diameter, &region).parameter("tool", tool.id));
         return Ok((Toolpath::new(), notice));
     }
     // Round inside corners of the cutter-location region: shrink then grow by the minimum radius.
@@ -1098,4 +1130,16 @@ fn bore(op: &Operation, ctx: &Context, pitch: f64, direction: Direction) -> Resu
     notice.value("holes", holes.len());
     notice.value("helix_radius_mm", r3(r));
     Ok((tp, notice))
+}
+
+/// A tool too big for the pocket, said plainly: how wide the pocket is at its widest, and that a
+/// smaller tool is wanted (the widest tool that fits is in the suggestion).
+fn too_large(diameter: f64, region: &[polyline::Poly]) -> Issue {
+    let widest = polyline::largest_inscribed(region, 64).map_or(0.0, |x| x.1 * 2.0);
+    let message = if widest > 0.0 {
+        format!("this pocket is about {widest:.1} mm wide: a {diameter:.2} mm tool won't fit. Pick a tool smaller than {widest:.1} mm")
+    } else {
+        format!("a {diameter:.2} mm tool won't fit this pocket: pick a smaller tool")
+    };
+    Issue::error("tool_too_large", message).suggest(serde_json::json!({"tool_diameter_max": r3(widest)}))
 }

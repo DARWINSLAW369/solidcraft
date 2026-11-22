@@ -18,6 +18,29 @@ pub struct CamJob {
     pub queued: Vec<u64>,
     /// When it started (ms).
     pub started: f64,
+    /// Tells the worker to stop before its next toolpath.
+    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+/// True for a command that changes an operation, tool, setup or machine: the toolpaths being
+/// made would be out of date, so a running job is given up and started again.
+pub fn is_cam_edit(id: &str) -> bool {
+    ["cam.operation.", "cam.tool.", "cam.setup.", "cam.machine."].iter().any(|p| id.starts_with(p))
+        && !id.ends_with(".list")
+        && !id.ends_with(".kinds")
+        && !id.ends_with(".get")
+}
+
+/// Gives up the running job (its worker stops before its next toolpath; what it still sends is
+/// dropped). True when one was running.
+pub fn cancel(app: &mut SolveApp) -> bool {
+    match app.cam_job.take() {
+        Some(job) => {
+            job.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+            true
+        }
+        None => false,
+    }
 }
 
 /// An operation's part in the running job, if any: `generating` or `queued`.
@@ -46,11 +69,12 @@ pub fn start(app: &mut SolveApp, params: Value) {
         }
     };
     let queued = job.operations.clone();
+    let cancel = job.cancel.clone();
     let (tx, rx) = std::sync::mpsc::channel();
     // Nothing to compute (every toolpath is current): report at once, here.
     if queued.is_empty() {
         job.run(|e| drop(tx.send(e)));
-        app.cam_job = Some(CamJob { rx, current: None, queued, started: crate::now_ms() });
+        app.cam_job = Some(CamJob { rx, current: None, queued, started: crate::now_ms(), cancel });
         drain(app);
         return;
     }
@@ -71,7 +95,7 @@ pub fn start(app: &mut SolveApp, params: Value) {
     }
     #[cfg(target_arch = "wasm32")]
     job.run(|e| drop(tx.send(e)));
-    app.cam_job = Some(CamJob { rx, current: None, queued, started: crate::now_ms() });
+    app.cam_job = Some(CamJob { rx, current: None, queued, started: crate::now_ms(), cancel });
 }
 
 /// Takes in what the job finished since the last frame; keeps frames coming while it runs.

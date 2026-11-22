@@ -77,15 +77,16 @@ impl Surface {
         let cell = ctx.cell_for(&b);
         let bounds = b.inflated(cell * 2.0);
         let mut map = ctx.cl_map(tool, &bounds, floor)?;
-        for j in 0..map.ny {
-            for i in 0..map.nx {
-                let p = map.point(i, j);
-                let border = i == 0 || j == 0 || i + 1 == map.nx || j + 1 == map.ny;
-                if border || !polyline::set_contains(&boundary, p) {
-                    map.set(i, j, BLOCKED);
-                }
-            }
-        }
+        // Outside the boundary (and the map's border) is blocked: a point-in-loops test for
+        // every cell, shared out over the CPU's threads like the drops.
+        let heights = map.clone();
+        let (nx, ny) = (map.nx, map.ny);
+        map.fill_parallel(|p| {
+            let i = ((p.x - heights.origin.x) / heights.cell).round() as usize;
+            let j = ((p.y - heights.origin.y) / heights.cell).round() as usize;
+            let border = i == 0 || j == 0 || i + 1 >= nx || j + 1 >= ny;
+            if border || !polyline::set_contains(&boundary, p) { BLOCKED } else { heights.get(i, j).unwrap_or(BLOCKED) }
+        });
         Ok(Surface { boundary, map, floor })
     }
 
@@ -1048,7 +1049,10 @@ fn horizontal(op: &Operation, ctx: &Context, stepover: f64, direction: Direction
             ny: m.ny,
             z: m.z.iter().map(|v| if v.is_finite() { -(v - z).abs() } else { f64::NEG_INFINITY }).collect(),
         };
-        let region = flat.contours(-tol);
+        // The contours have a point every cell (hundredths of a mm): simplified to the cell, the
+        // pocket offsets them far faster and the path has far fewer tiny moves.
+        let region: Vec<Poly> =
+            flat.contours(-tol).iter().map(|l| polyline::simplify_closed(l, m.cell)).filter(|l| l.len() >= 3).collect();
         if region.is_empty() {
             continue;
         }

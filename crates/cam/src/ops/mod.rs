@@ -813,14 +813,17 @@ impl Context<'_> {
         let cell = self.cell_for(bounds);
         let axial = self.stock_to_leave_axial;
         let mut map = HeightMap::new(*bounds, cell, floor)?;
-        for j in 0..map.ny {
-            for i in 0..map.nx {
-                let p = map.point(i, j);
-                let z = mesh.drop(tool, &Frame::IDENTITY, p, floor).map_or(floor, |c| c.z + axial);
-                let fz = self.fixture_drop(tool, p, floor).map_or(floor, |c| c.z);
-                map.set(i, j, z.max(fz).max(floor));
-            }
-        }
+        // Millions of tool drops: shared out over the CPU's threads. The threads get only the
+        // meshes and tools (what fixture_drop uses), not the context with its cache.
+        let plan = &self.boundary;
+        let fx = self.fixtures.filter(|f| plan.avoid_fixtures && plan.fixtures_as_solids && !f.is_empty());
+        let clear = plan.fixture_clearance;
+        let grown = grow_tool(tool, clear);
+        map.fill_parallel(|p| {
+            let z = mesh.drop(tool, &Frame::IDENTITY, p, floor).map_or(floor, |c| c.z + axial);
+            let fz = fx.and_then(|f| f.drop(&grown, &Frame::IDENTITY, p, floor - clear)).map_or(floor, |k| k.z + clear);
+            z.max(fz).max(floor)
+        });
         Ok(map)
     }
 
