@@ -2,8 +2,9 @@
 >
 > **[How to use it, with pictures](docs/cam-how-to)**. To try it, build it from this branch (`cargo build --release -p solidcraft --bin solidcraft`). There's no ready-made download: SolidCraft's name and look are under its Brand and Interface Licence ([LICENSE-BRAND](LICENSE-BRAND)), so builds are shared only with the SolidCraft maintainers' OK.
 >
-> This branch (`main`) holds this fork's own build, version 19. It's built on jb69's CAM branch of SolidCraft. The idea behind every change: **work with what you can see, show only what you need to make the part, and leave out what gets decided at the machine anyway.**
+> This branch (`main`) holds this fork's own build, version 21. It's built on jb69's CAM branch of SolidCraft. The idea behind every change: **work with what you can see, show only what you need to make the part, and leave out what gets decided at the machine anyway.**
 >
+> - **Click the feature, pick the tool.** On the Model tab too: click an edge, a face or a body and the tools that fit it show up (Fillet, Sketch, Press Pull, Hole, Move, Joint, Measure, one-click vertical or level tangent planes).
 > - **Click the feature, pick the operation.** Click a floor, a wall, a hole or an edge, and a small menu lists every operation that fits it. Pick one and it's made on that click.
 > - **Setup is two clicks.** Click the face that faces up, then your zero (a corner of the part or of the stock).
 > - **Group by Tool.** Sorts the operations so each tool is loaded once, keeping any order that matters (a pocket before the hole through its floor). The list, the simulation and the G-code all run in that order.

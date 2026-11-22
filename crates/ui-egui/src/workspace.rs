@@ -300,7 +300,7 @@ const MODEL_ASSEMBLE_POSITION: &[&str] = &["occurrence.move", "occurrence.ground
 const MODEL_ASSEMBLE_MOTION: &[&str] = &["joint.drive", "joint.motion_link", "motion.study", "motion.trace", "explode.create"];
 const MODEL_ASSEMBLE_CONTACT: &[&str] =
     &["contact.enable_sets", "contact.check", "contact.enable_all", "contact.disable_all", "contact.create", "contact.edit", "contact.list"];
-const MODEL_INSERT_FILES: &[&str] = &["file.insert_step", "mesh.convert", "file.insert_mesh", "pointcloud.insert", "file.save_mesh", "file.send_to_slicer"];
+const MODEL_INSERT_FILES: &[&str] = &["file.insert_step", "file.insert_mesh", "mesh.convert", "pointcloud.insert", "file.save_mesh", "file.send_to_slicer"];
 const MODEL_INSERT_IMAGES: &[&str] = &["canvas.insert", "canvas.decal", "canvas.edit"];
 const MODEL_INSERT_LIBRARY: &[&str] = &["parts.fastener", "parts.library", "parts.resize", "parts.insert"];
 const MODEL_INSERT_LINKS: &[&str] = &["component.update_links", "component.break_link"];
@@ -402,8 +402,9 @@ pub const SECTIONS: &[Section] = &[
         ids: &["solid.move", "solid.mirror", "solid.pattern.rectangular", "solid.align", "solid.pattern.circular", "solid.pattern.path"],
     },
     Section { tab: "MODEL", panel: "ASSEMBLE", promoted: 2, ids: &MODEL_ASSEMBLE },
-    // Insert STEP and Mesh to Solid (an STL made a solid) on the ribbon, the rest in the menu.
-    Section { tab: "MODEL", panel: "INSERT", promoted: 2, ids: &MODEL_INSERT },
+    // Insert STEP, Import STL and Mesh to Solid (an STL made a solid) on the ribbon, the rest in
+    // the menu: STEP and STL are the files a shop gets.
+    Section { tab: "MODEL", panel: "INSERT", promoted: 3, ids: &MODEL_INSERT },
     Section { tab: "MODEL", panel: "INSPECT", promoted: 2, ids: &MODEL_INSPECT },
     // Plane, Axis and Point work out the method from the picks; the methods follow in the menu.
     Section {

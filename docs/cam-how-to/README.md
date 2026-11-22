@@ -1,6 +1,6 @@
 # SolidCraft CAM: from a model to G-code
 
-Version 19 of this fork. A printable copy with the same pictures: [SolidCraft CAM - How To.pdf](SolidCraft%20CAM%20-%20How%20To.pdf).
+Version 21 of this fork. A printable copy with the same pictures: [SolidCraft CAM - How To.pdf](SolidCraft%20CAM%20-%20How%20To.pdf).
 
 You already drew the part. The CAM uses your geometry: you click what you see (the floor of a pocket, a wall, a hole, an edge) and it works out the outline and the depth. Every number it uses is one you can see and change. It never guesses speeds and feeds for you; you set those for your machine.
 
@@ -93,6 +93,18 @@ Click **Make G-code**, pick your post processor (**Mach3** for .tap files) and s
 Changed a tool or an operation? The toolpaths it affects are remade on their own; nothing waits for Make Toolpaths.
 
 ![Post Program form](img/11-make-gcode.png)
+
+## The Model tab works the same way
+
+Click what you see, with no tool running:
+- **An edge:** Fillet, Chamfer, Axis
+- **A flat face:** Sketch on it, Press Pull, Extrude, Hole, Shell, Offset Face, Plane
+- **A round face:** **Tangent Plane: Vertical** or **Level** (made in one click, on the side you clicked), Axis, Thread
+- **A body:** Move, Mirror, Pattern, Combine; an STL body: Mesh to Solid
+- **A sketch profile:** Extrude, Revolve, Sweep
+- **A part of an assembly:** Joint, Move, Ground
+
+Joint, Measure and Section are offered too. Shift-click adds more edges or faces. The tool starts with what you clicked. Hover a face or edge and the Model ribbon lights up the tools that fit.
 
 ## STL files
 

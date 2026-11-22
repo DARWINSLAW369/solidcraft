@@ -21,6 +21,7 @@ pub mod browser_canvas;
 pub mod browser_prompts;
 pub mod auto_form;
 pub mod cam_editor;
+pub mod model_menu;
 pub mod shop_library;
 pub mod cam_job;
 pub mod cam_panel;
@@ -3832,6 +3833,7 @@ impl SolveApp {
         cam_job::poll(self, ui.ctx());
         cam_panel::show(self, ui.ctx());
         cam_editor::show(self, ui.ctx());
+        model_menu::show(self, ui.ctx());
         shop_library::show(self, ui.ctx());
         sketch_report::show(self, ui.ctx());
         material_card_review::show(self, ui.ctx());
